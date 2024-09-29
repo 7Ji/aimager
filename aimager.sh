@@ -57,12 +57,12 @@
 # }
 
 # pre-defined various logging statements
-## Callers shall log like this: eval "${log_info}" && echo 'Log content' ||:
-## When a logging level is enabled the above is effectively echo -n  '[INFO] function_name@line_no: ' && echo 'Log content'
-## When a logging level is disabled the above is effectively false ||:
-## The ||: part is needed to make sure logging statement always return 0, because when some 
+## Callers shall log like this: eval "${log_info}" || echo 'Log content'
+## When a logging level is enabled the above is effectively echo -n  '[INFO] function_name@line_no: ' && false ||  echo 'Log content'
+## When a logging level is disabled the above is effectively true ||  echo 'Log content' so echo would be skipped
+## For more info, read https://7ji.github.io/scripting/2024/09/29/bash-logging-with-funcname-lineno.html
 log_common_start='echo -n "['
-log_common_end='] ${FUNCNAME}@${LINENO}: "'
+log_common_end='] ${FUNCNAME}@${LINENO}: " && false'
 log_info="${log_common_start}INFO${log_common_end}"
 log_warn="${log_common_start}WARN${log_common_end}"
 log_error="${log_common_start}ERROR${log_common_end}"
@@ -76,32 +76,32 @@ log_debug="${log_common_start}DEBUG${log_common_end}"
 ## $1: caller (for logging)
 ## $2...: vairable names
 assert_declared() {
-    eval "${log_debug}" && echo "Asserting variables for $1: ${*:2}" ||:
+    eval "${log_debug}" || echo "Asserting variables for $1: ${*:2}"
     local _bad= _var=
     while (( $# > 1 )); do
         if [[ ! -v $2 ]]; then
-            eval "${log_fatal}" && echo "Variable \"$2\" is not declared" ||:
+            eval "${log_fatal}" || echo "Variable \"$2\" is not declared"
             _bad='y'
             shift
             continue
         fi
         declare -n _var="$2"
         if [[ -z "${_var}" ]]; then
-            eval "${log_fatal}" && echo "Variable \"$2\" is empty" ||:
+            eval "${log_fatal}" || echo "Variable \"$2\" is empty"
             _bad='y'
         fi
         shift
     done
     if [[ "${_bad}" ]]; then
-        eval "${log_fatal}" && echo 'Declaration assertion failed' ||:
+        eval "${log_fatal}" || echo 'Declaration assertion failed'
         exit 1
     fi
 }
 assert_declared_this_func='assert_declared "${FUNCNAME}@${LINENO}" '
 else # Empty function bodies and short paths when debugging is not enabled, 
-log_debug='false'
+log_debug='true'
 assert_declared() { :; }
-assert_declared_this_func="true||"
+assert_declared_this_func="false"
 fi
 
 # check if an executable exists
@@ -112,16 +112,16 @@ fi
 check_executable() { 
     local type_executable
     if ! type_executable=$(type -t "$1"); then
-        eval "${log_fatal}" && echo "Could not find needed executable \"$1\". It's needed to $2." ||:
+        eval "${log_fatal}" || echo "Could not find needed executable \"$1\". It's needed to $2."
         "$3"
         if ! type_executable=$(type -t "$1"); then
-            eval "${log_fatal}" && echo "Still could not find needed executable \"$1\" after callback \"$3\". It's needed to $2." ||:
+            eval "${log_fatal}" || echo "Still could not find needed executable \"$1\" after callback \"$3\". It's needed to $2."
             return 1
         fi
         # explicit fallthrough: unless callback is false, we would check whether the executable becomes available after callback
     fi
     if [[ "${type_executable}" != 'file' ]]; then
-        eval "${log_fatal}" && echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2." ||:
+        eval "${log_fatal}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2."
         return 1
     fi
 }
@@ -133,7 +133,8 @@ check_executable_must_exist() {
 
 check_executables() {
     check_executable_must_exist curl 'download files from Internet'
-    check_executable_must_exist sed2 'do text substitution'
+    check_executable_must_exist sed 'do text substitution'
+    check_executable_must_exist uname 'dump machine architecture'
 }
 # check_executables() {
 #     local executables=(
@@ -144,17 +145,18 @@ check_executables() {
 #         name_executable="${executable%%:*}"
 #         hint_executable="${executable#*:}"
 #         if ! type_executable=$(type -t "${name_executable}"); then
-#             eval "${log_fatal}" && echo "Could not find needed executable \"${name_executable}\". It's needed to ${hint_executable}." ||:
+#             eval "${log_fatal}" || echo "Could not find needed executable \"${name_executable}\". It's needed to ${hint_executable}."
 #             return 1
 #         fi
 #         if [[ "${type_executable}" != 'file' ]]; then
-#             eval "${log_fatal}" && echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to ${hint_executable}." ||:
+#             eval "${log_fatal}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to ${hint_executable}."
 #             return 1
 #         fi
 #     done
 # }
 
 load_lazily() {
+    :
     
 }
 
@@ -182,14 +184,96 @@ my_callback() {
 
 assert_errexit() {
     if [[ $- != *e* ]]; then
-        eval "${log_fatal}" && echo 'The script must be run with -e' || :
+        eval "${log_fatal}" || echo 'The script must be run with -e'
         exit 1
     fi
+}
+
+get_architecture() { #1
+    case "${architecture}" in
+        auto|host|'')
+            architecture=$(uname -m)
+            local allowed_architecture
+            for allowed_architecture in "${allowed_architectures[@]}"; do
+                [[ "${allowed_architecture}" == "${architecture}" ]] && return 0
+            done
+            eval "${log_error}" || echo "Auto-detected architecture '${architecture}' is not allowed for distro '${distro}'. Allowed: ${allowed_architectures[*]}"
+            return 1
+            ;;
+        *)
+            architecture="${allowed_architectures[0]}"
+            ;;
+    esac
+}
+
+get_distro() {
+    distro=$(source /etc/os-release; echo $NAME)
+    local allowed_architectures=()
+    case "${distro}" in
+        'Arch Linux')
+            allowed_architectures=(x86_64)
+            ;;
+        'Arch Linux ARM')
+            allowed_architectures=(aarch64 armv7h)
+            ;;
+        'Loong Arch Linux')
+            allowed_architectures=(loong64)
+            ;;
+        *)
+            eval "${log_warn}" || echo "Unknown distro from /etc/os-release: ${distro}"
+            ;;
+    esac
+}
+
+get_pacman_conf() { #1: distro, $2: architecture
+    case "$1" in
+        'Arch Linux')
+            ;;
+        'Arch Linux ARM')
+            ;;
+        'Loong Arch Linux')
+            ;;
+    esac
+}
+
+get_mirror() { #1: distro (stylised whole name), #2: architecture (pacman.conf value)
+    local mirror_local="${mirror_local:-https://mirrors.tuna.tsinghua.edu.cn}"
+    local mirror_alarm_global='http://mirror.archlinuxarm.org/$arch/$repo'
+    local mirror_alarm_local="${mirror_local}"'/archlinuxarm/$arch/$repo'
+    local mirror_arch_global='https://geo.mirror.pkgbuild.com/$repo/os/$arch'
+    local mirror_arch_local="${mirror_local}"'/archlinux/$arch/$repo'
+    case "$1 @ $2" in
+        'Arch Linux @ x86_64')
+            mirror_base_global="${mirror_arch_global}"
+            mirror_base_local="${mirror_arch_local}"
+            ;;
+        'Arch Linux ARM @ aarch64')
+            mirror_base_global="${mirror_alarm_global}"
+            mirror_base_local="${mirror_alarm_local}"
+            ;;
+        'Arch Linux ARM @ armv7h')
+            mirror_base_global="${mirror_alarm_global}"
+            mirror_base_local="${mirror_alarm_local}"
+            ;;
+        'Loong Arch Linux @ loong64')
+            :
+            ;;
+        *)
+            eval "${log_fatal}" || echo "Unknown distribution '$1' and architecture '$2' combination"
+            return 1
+            ;;
+    esac
+}
+
+argparse() {
+    :
+
+
 }
 
 main() {
     assert_errexit
     check_executables
-    eval "${log_debug}" && echo 'Hello there' ||:
+    eval "${log_debug}" || echo 'Hello there'
 }
 main
