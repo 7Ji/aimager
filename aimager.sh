@@ -36,7 +36,7 @@
 
 ## expanded: expaned repo config
 ### name: expaned_repo_condfig(_[name]) expanded_repo_config
-### format: 
+### format:
 
 ## name: repo_config
 
@@ -69,7 +69,7 @@ log_error="${log_common_start}ERROR${log_common_end}"
 log_fatal="${log_common_start}FATAL${log_common_end}"
 
 # Debugging-only definitions
-if [[ "${aimager_debug}" ]]; then
+if [[ "${AIMAGER_DEBUG}" ]]; then
 log_debug="${log_common_start}DEBUG${log_common_end}"
 
 # Assert variables are defined and non-empty
@@ -98,7 +98,7 @@ assert_declared() {
     fi
 }
 assert_declared_this_func='assert_declared "${FUNCNAME}@${LINENO}" '
-else # Empty function bodies and short paths when debugging is not enabled, 
+else # Empty function bodies and short paths when debugging is not enabled,
 log_debug='true'
 assert_declared() { :; }
 assert_declared_this_func="false"
@@ -109,19 +109,19 @@ fi
 ## $2: hint
 ## $3: missing callback
 
-check_executable() { 
+check_executable() {
     local type_executable
     if ! type_executable=$(type -t "$1"); then
-        eval "${log_fatal}" || echo "Could not find needed executable \"$1\". It's needed to $2."
+        eval "${log_error}" || echo "Could not find needed executable \"$1\". It's needed to $2."
         "$3"
         if ! type_executable=$(type -t "$1"); then
-            eval "${log_fatal}" || echo "Still could not find needed executable \"$1\" after callback \"$3\". It's needed to $2."
+            eval "${log_error}" || echo "Still could not find needed executable \"$1\" after callback \"$3\". It's needed to $2."
             return 1
         fi
         # explicit fallthrough: unless callback is false, we would check whether the executable becomes available after callback
     fi
     if [[ "${type_executable}" != 'file' ]]; then
-        eval "${log_fatal}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2."
+        eval "${log_error}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2."
         return 1
     fi
 }
@@ -135,6 +135,8 @@ check_executables() {
     check_executable_must_exist curl 'download files from Internet'
     check_executable_must_exist sed 'do text substitution'
     check_executable_must_exist uname 'dump machine architecture'
+    check_executable_must_exist unshare 'unshare child process to do rootless stuffs'
+    check_executable pacman 'install packages' prepare_pacman
 }
 # check_executables() {
 #     local executables=(
@@ -155,20 +157,6 @@ check_executables() {
 #     done
 # }
 
-load_lazily() {
-    :
-    
-}
-
-# try_
-
-# Needed:
-generate_pacman_config() {
-    :
-}
-
-
-
 argparse_main() {
     while ((  $# > 0 )); do
 
@@ -176,10 +164,6 @@ argparse_main() {
 
         shift
     done
-}
-
-my_callback() {
-    echo hello
 }
 
 assert_errexit() {
@@ -268,12 +252,81 @@ get_mirror() { #1: distro (stylised whole name), #2: architecture (pacman.conf v
 argparse() {
     :
 
+}
+
+help_builder() {
+    echo 'Usage:'
+    echo "  $0 builder (--help)"
+    echo
+    echo '--help    print this help message'
 
 }
 
-main() {
-    assert_errexit
+applet_builder() {
+    distribution="${AIMAGER_DISTRIBUTION}"
+    architecture="${AIMAGER_ARCHITECTURE}"
+    while (( $# > 0 )); do
+        case "$1" in
+        '--help')
+            help_builder
+            return 0
+            ;;
+        '--distribution')
+            distribution="$2"
+            shift
+            ;;
+        '--architecture')
+            architecture="$2"
+            shift
+            ;;
+        esac
+    done
+    PATH="${PWD}/bin:${PATH}"
     check_executables
     eval "${log_debug}" || echo 'Hello there'
 }
-main
+
+help_child() {
+    echo 'Usage:'
+    echo "  $0 child (--help)"
+    echo
+    echo '--help    print this help message'
+
+}
+
+applet_child() {
+    while (( $# > 0 )); do
+        case "$1" in
+        '--help')
+            help_child
+            return 0
+            ;;
+
+        esac
+    done
+}
+
+help_dispatch() {
+    echo 'Usage:'
+    echo "  $0 [applet]/(--)help"
+    echo
+    echo '[applet]  one of the following: builder, child'
+    echo '--help    print this help message, for help about applets, write --help after [applet]'
+}
+
+assert_errexit
+case "$1" in
+'builder')
+    applet_builder "${@:2}"
+    ;;
+'child')
+    applet_child "${@:2}"
+    ;;
+'--help' | 'help')
+    help_dispatch
+    ;;
+*)
+    eval "${log_warn}" || echo "Unknown applet '$1', printing help message instead"
+    help_dispatch
+    ;;
+esac
