@@ -1,16 +1,21 @@
+#!/bin/bash
 echo -n "all:" > Makefile
 printf ' test-%s' x86_64 aarch64 riscv64 loongarch64  >> Makefile
 echo >> Makefile
-for arch_prefix in \
-	x86_64:x86_64-linux-gnu- \
-	aarch64:aarch64-linux-gnu- \
-	riscv64:riscv64-linux-gnu- \
-	loongarch64:loongarch64-linux-gnu- \
+for arch in \
+	x86_64 \
+	aarch64 \
+	riscv64 \
+	loongarch64 \
 ;
 do
-	arch=${arch_prefix%%:*}
-	prefix=${arch_prefix##*:}
-	printf 'hello-%s: hello.c\n\t%sgcc -DARCH=\\"%s\\" -static -o $@ $^\n' "$arch" "$prefix" "$arch"
-	printf 'test-%s: hello-%s\n\t[[ "$(shell ./hello-%s)" == "Hello from architecture: %s" ]]\n' "$arch" "$arch" "$arch" "$arch"
+	#arch=${triplet%%-*}
+	triplet="${arch}-linux-gnu"
+	printf 'hello-%s: hello.c\n\t%s-gcc -DARCH=\\"%s\\" -static -o $@ $^\n' "$arch" "$triplet" "$arch"
+	if  [[ "$arch" == $(uname -m) ]]; then
+		printf 'test-%s: hello-%s\n\t[[ "$(shell ./hello-%s)" == "Hello from architecture: %s" ]]\n' "$arch" "$arch" "$arch" "$arch"
+	else
+		printf 'test-%s: hello-%s\n\t[[ "$(shell /usr/%s/lib/ld-linux-*.so.* --library-path /usr/%s/lib ./hello-%s)" == "Hello from architecture: %s" ]]\n' "$arch" "$arch" "$triplet" "$triplet" "$arch" "$arch"
+	fi
 done >> Makefile
 make
