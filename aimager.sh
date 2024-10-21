@@ -222,14 +222,41 @@ get_pacman_conf() { #1: distro, $2: architecture
 
 get_mirror() { #1: distro (stylised whole name), #2: architecture (pacman.conf value)
     local mirror_local="${mirror_local:-https://mirrors.tuna.tsinghua.edu.cn}"
-    local mirror_alarm_global='http://mirror.archlinuxarm.org/$arch/$repo'
-    local mirror_alarm_local="${mirror_local}"'/archlinuxarm/$arch/$repo'
-    local mirror_arch_global='https://geo.mirror.pkgbuild.com/$repo/os/$arch'
-    local mirror_arch_local="${mirror_local}"'/archlinux/$arch/$repo'
+
+    local mirror_alarm_suffix='$arch/$repo'
+    local mirror_arch32_suffix='archlinux32/$arch/$repo'
+    local mirror_arch_suffix='$repo/os/$arch'
+    local mirror_loong_suffix='loongarch/archlinux/'"${mirror_arch_suffix}"
+
+    # If a distro has multiple arch, decalre them earlier so varaibles are written less
+    local mirror_arch32_global='https://mirror.math.princeton.edu/pub/'"${mirror_arch32_suffix}"
+    local mirror_arch32_local="${mirror_local}/${mirror_arch32_suffix}"
+    local mirror_alarm_global='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
+    local mirror_alarm_local="${mirror_local}"'/archlinuxarm/'"${mirror_alarm_suffix}"
+
+
+    case "$1" in
+        "Arch Linux")
+            ;;
+        "Arch Linux 32")
+            ;;
+        "Arch Linux ARM");
+
+
+    esac
     case "$1 @ $2" in
         'Arch Linux @ x86_64')
-            mirror_base_global="${mirror_arch_global}"
-            mirror_base_local="${mirror_arch_local}"
+            mirror_base_global='https://geo.mirror.pkgbuild.com/'"${mirror_arch_suffix}"
+            mirror_base_local="${mirror_local}"'/archlinux/'"${mirror_arch_suffix}"
+            ;;
+        'Arch Linux 32 @ i486'|)
+            :
+            ;;
+        'Arch Linux 32 @ i686')
+            :
+            ;;
+        'Arch Linux 32 @ pentium4')
+            :
             ;;
         'Arch Linux ARM @ aarch64')
             mirror_base_global="${mirror_alarm_global}"
@@ -240,11 +267,26 @@ get_mirror() { #1: distro (stylised whole name), #2: architecture (pacman.conf v
             mirror_base_local="${mirror_alarm_local}"
             ;;
         'Loong Arch Linux @ loong64')
-            :
+            mirror_base_global='https://mirrors.wsyu.edu.cn/'"${mirror_loong_suffix}"
+            mirror_base_local="${mirror_local}"'/loongarch/'"${mirror_loong_suffix}"
             ;;
         *)
             eval "${log_fatal}" || echo "Unknown distribution '$1' and architecture '$2' combination"
             return 1
+            ;;
+    esac
+}
+
+get_bootloader() { #1: architecture
+    case "$1" in
+        'x86_64')
+            bootloader=systemd-boot
+            ;;
+        'i686'|'i486'|'pentium4')
+            bootloader=syslinux
+            ;;
+        'aarch64')
+            bootloader=uboot-bootflow
             ;;
     esac
 }
@@ -291,7 +333,6 @@ help_child() {
     echo "  $0 child (--help)"
     echo
     echo '--help    print this help message'
-
 }
 
 applet_child() {
@@ -308,10 +349,10 @@ applet_child() {
 
 help_dispatch() {
     echo 'Usage:'
-    echo "  $0 [applet]/(--)help"
+    echo "  $0 [applet]/--help"
     echo
     echo '[applet]  one of the following: builder, child'
-    echo '--help    print this help message, for help about applets, write --help after [applet]'
+    echo '--help    print this help message; for help about applets, write --help after [applet]'
 }
 
 assert_errexit
@@ -322,7 +363,7 @@ case "$1" in
 'child')
     applet_child "${@:2}"
     ;;
-'--help' | 'help')
+'--help')
     help_dispatch
     ;;
 *)
