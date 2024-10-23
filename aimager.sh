@@ -284,7 +284,7 @@ no_source() {
 source() { no_source; }
 .() { no_source; }
 
-guard_include='declare -n guard="included_${FUNCNAME#include_}" && [[ "${guard}" ]] && return || guard=1'
+guard_configure='declare -n guard="configured_${FUNCNAME#configure_}" && [[ "${guard}" ]] && return || guard=1'
 
 require_architecture_host() {
     :
@@ -294,8 +294,8 @@ require_architecture_target() {
     :
 }
 
-include_archlinux() {
-    eval "${guard_include}"
+configure_archlinux() {
+    eval "${guard_configure}"
     require_architecture_target x86_64
     local mirror_arch_suffix='$repo/os/$arch'
     if [[ "${mirror_local}" ]]; then
@@ -305,13 +305,13 @@ include_archlinux() {
     fi
 }
 
-include_archlinux_x86_64() {
-    eval "${guard_include}"
-    include_archlinux
+configure_archlinux_x86_64() {
+    eval "${guard_configure}"
+    configure_archlinux
 }
 
-include_archlinux32() {
-    eval "${guard_include}"
+configure_archlinux32() {
+    eval "${guard_configure}"
     require_architecture_target i486 pentium4 i686
     if [[ -z "${mirror_local}" ]]; then
         eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
@@ -320,23 +320,23 @@ include_archlinux32() {
     mirorr_base="${mirror_local}"'/archlinux32/$arch/$repo'
 }
 
-include_archlinux32_i486() {
-    eval "${guard_include}"
-    include_archlinux32
+configure_archlinux32_i486() {
+    eval "${guard_configure}"
+    configure_archlinux32
 }
 
-include_archlinux32_pentium4() {
-    eval "${guard_include}"
-    include_archlinux32
+configure_archlinux32_pentium4() {
+    eval "${guard_configure}"
+    configure_archlinux32
 }
 
-include_archlinux32_i686() {
-    eval "${guard_include}"
-    include_archlinux32
+configure_archlinux32_i686() {
+    eval "${guard_configure}"
+    configure_archlinux32
 }
 
-include_archlinuxarm() {
-    eval "${guard_include}"
+configure_archlinuxarm() {
+    eval "${guard_configure}"
     require_architecture_target aarch64 armv7h
     local mirror_alarm_suffix='$arch/$repo'
     if [[ "${mirror_local}" ]]; then
@@ -346,18 +346,18 @@ include_archlinuxarm() {
     fi
 }
 
-include_archlinuxarm_aarch64() {
-    eval "${guard_include}"
-    include_archlinuxarm
+configure_archlinuxarm_aarch64() {
+    eval "${guard_configure}"
+    configure_archlinuxarm
 }
 
-include_archlinuxarm_armv7h() {
-    eval "${guard_include}"
-    include_archlinuxarm
+configure_archlinuxarm_armv7h() {
+    eval "${guard_configure}"
+    configure_archlinuxarm
 }
 
-include_loongarchlinux() {
-    eval "${guard_include}"
+configure_loongarchlinux() {
+    eval "${guard_configure}"
     require_architecture_target loong64
     if [[ -z "${mirror_local}" ]]; then
         eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
@@ -366,13 +366,13 @@ include_loongarchlinux() {
     mirorr_base="${mirror_local}"'/loongarch/archlinux/$repo/os/$arch'
 }
 
-include_loongarchlinux_loong64() {
-    eval "${guard_include}"
-    include_loongarchlinux
+configure_loongarchlinux_loong64() {
+    eval "${guard_configure}"
+    configure_loongarchlinux
 }
 
-include_archlinuxriscv() {
-    eval "${guard_include}"
+configure_archlinuxriscv() {
+    eval "${guard_configure}"
     require_architecture_target riscv64
     if [[ "${mirror_local}" ]]; then
         :
@@ -381,16 +381,16 @@ include_archlinuxriscv() {
     fi
 }
 
-include_archlinuxriscv_riscv64() {
-    eval "${guard_include}"
-    include_archlinuxriscv
+configure_archlinuxriscv_riscv64() {
+    eval "${guard_configure}"
+    configure_archlinuxriscv
 }
 
-include_archlinuxcn() {
-    eval "${guard_include}"
+configure_archlinuxcn() {
+    eval "${guard_configure}"
 }
 
-guard_include='local _included=included_${FUNCNAME#include_} && [[ "$included_${FUNCNAME#include_}" ]] && return || included_${FUNCNAME#include_}=1'
+guard_configure='local _included=configured_${FUNCNAME#configure_} && [[ "$configured_${FUNCNAME#configure_}" ]] && return || configured_${FUNCNAME#configure_}=1'
 
 get_bootloader() { #1: architecture
     case "$1" in
