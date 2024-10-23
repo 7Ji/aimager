@@ -110,6 +110,7 @@ fi
 ## $3: missing callback
 
 check_executable() {
+    eval "${log_debug}" || echo "Checking executable $1"
     local type_executable
     if ! type_executable=$(type -t "$1"); then
         eval "${log_error}" || echo "Could not find needed executable \"$1\". It's needed to $2."
@@ -133,10 +134,77 @@ check_executable_must_exist() {
 
 check_executables() {
     check_executable_must_exist curl 'download files from Internet'
+    check_executable_must_exist date 'check current time'
+    check_executable_must_exist install 'install file to certain paths'
     check_executable_must_exist sed 'do text substitution'
+    check_executable_must_exist stat 'get file modification date'
+    check_executable_must_exist tar 'extract file from archives'
     check_executable_must_exist uname 'dump machine architecture'
     check_executable_must_exist unshare 'unshare child process to do rootless stuffs'
-    check_executable pacman 'install packages' prepare_pacman
+    check_executable pacman 'install packages' get_pacman_static
+}
+
+download() { # 1: url, 2: path, 3: mod
+    rm -f "$2"{,.temp}
+    echo -n | install -Dm"${3:-755}" /dev/stdin "$2".temp
+    eval "${log_info}" || echo "Downloading '$2' < '$1'"
+    curl -qgb "" -fL --retry 3 --retry-delay 3 -o "$2".temp "$1" || return 1
+    eval "${log_info}" || echo "Downloaded '$2' <= '$1'"
+    mv "$2"{.temp,}
+}
+
+touched_after_start() { #1: path
+    [[ $(stat -c '%Y' "$1" 2>/dev/null) -ge "${time_start_builder}" ]]
+}
+
+get_repo_db() { #1: repo url, 2: repo name
+    path_db="cache/repo/$2.db"
+    touched_after_start "${path_db}" && return
+    download "$1/$2.db" "${path_db}"
+}
+
+get_repo_pkg() { #1: repo url, 2: repo name, 3: package
+    get_repo_db "$1" "$2"
+    pkg_ver=
+    pkg_file=
+    local line= pkg_name=
+    for line in $(tar -xOf "${path_db}" --wildcards "$3"'-*/desc' | sed -n '/%FILENAME/{n;p;};/%NAME%/{n;p;};/%VERSION%/{n;p;}'); do
+        [[ -z "${pkg_file}" ]] && pkg_file="${line}" && continue
+        [[ -z "${pkg_name}" ]] && pkg_name="${line}" && continue
+        pkg_ver="${line}"
+        [[ "${pkg_name}" == "$3" ]] && break
+        pkg_file=
+        pkg_name=
+    done
+    if [[ "${pkg_name}" != "$3" ]] || [[ -z "${pkg_file}" ]] || [[ -z "${pkg_ver}" ]]; then
+        eval "${log_error}" || echo "Failed to get package '$3' from repo '$2' at '$1'"
+        return 1
+    fi
+    eval "${log_info}" || echo "Latest '$3' from repo '$2' at '$1' is at version '${pkg_ver}'"
+    path_pkg=cache/pkg/"${pkg_file}"
+    if [[ -f "${path_pkg}" ]]; then
+        eval "${log_info}" || echo "Skipped downloading as '${path_pkg}' already exists locally"
+        return
+    fi
+    download "$1/${pkg_file}" "${path_pkg}"
+}
+
+get_repo_pkg_file() { #1: repo url, 2: repo name, 3: package, 4: file path, 5: mod
+    # local path_file="cache/pkg/$3/$4"
+    # if touched_after_start "${path_file}"; then
+    #     chmod "${5:-644}" "${path_file}"
+    #     return
+    # fi
+    get_repo_pkg "$1" "$2" "$3"
+    path_file="cache/pkg/$3-${pkg_ver}/$4"
+    tar -xOf "cache/pkg/${pkg_file}" "$4" |
+        install -Dm"${5:-644}" /dev/stdin "${path_file}"
+}
+
+get_pacman_static() {
+    eval "${log_info}" || echo 'Trying to get latest pacman-static from archlinuxcn repo'
+    get_repo_pkg_file http://repo.7ji.lan/archlinuxcn/x86_64 archlinuxcn pacman-static usr/bin/pacman-static 755
+    eval 'pacman() { '"'${path_file}'"' "$@"; }'
 }
 # check_executables() {
 #     local executables=(
@@ -209,73 +277,120 @@ get_distro() {
     esac
 }
 
-get_pacman_conf() { #1: distro, $2: architecture
-    case "$1" in
-        'Arch Linux')
-            ;;
-        'Arch Linux ARM')
-            ;;
-        'Loong Arch Linux')
-            ;;
-    esac
+no_source() {
+    eval "${log_fatal}" || echo "Both 'source' and '.' are banned from aimager, aimager is strictly single-file only"
+    return 1
+}
+source() { no_source; }
+.() { no_source; }
+
+guard_include='declare -n guard="included_${FUNCNAME#include_}" && [[ "${guard}" ]] && return || guard=1'
+
+require_architecture_host() {
+    :
 }
 
-get_mirror() { #1: distro (stylised whole name), #2: architecture (pacman.conf value)
-    local mirror_local="${mirror_local:-https://mirrors.tuna.tsinghua.edu.cn}"
+require_architecture_target() {
+    :
+}
 
-    local mirror_alarm_suffix='$arch/$repo'
-    local mirror_arch32_suffix='archlinux32/$arch/$repo'
+include_archlinux() {
+    eval "${guard_include}"
+    require_architecture_target x86_64
     local mirror_arch_suffix='$repo/os/$arch'
-    local mirror_loong_suffix='loongarch/archlinux/'"${mirror_arch_suffix}"
-
-    # If a distro has multiple arch, decalre them earlier so varaibles are written less
-    local mirror_arch32_global='https://mirror.math.princeton.edu/pub/'"${mirror_arch32_suffix}"
-    local mirror_arch32_local="${mirror_local}/${mirror_arch32_suffix}"
-    local mirror_alarm_global='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
-    local mirror_alarm_local="${mirror_local}"'/archlinuxarm/'"${mirror_alarm_suffix}"
-
-
-    case "$1" in
-        "Arch Linux")
-            ;;
-        "Arch Linux 32")
-            ;;
-        "Arch Linux ARM");
-
-
-    esac
-    case "$1 @ $2" in
-        'Arch Linux @ x86_64')
-            mirror_base_global='https://geo.mirror.pkgbuild.com/'"${mirror_arch_suffix}"
-            mirror_base_local="${mirror_local}"'/archlinux/'"${mirror_arch_suffix}"
-            ;;
-        'Arch Linux 32 @ i486'|)
-            :
-            ;;
-        'Arch Linux 32 @ i686')
-            :
-            ;;
-        'Arch Linux 32 @ pentium4')
-            :
-            ;;
-        'Arch Linux ARM @ aarch64')
-            mirror_base_global="${mirror_alarm_global}"
-            mirror_base_local="${mirror_alarm_local}"
-            ;;
-        'Arch Linux ARM @ armv7h')
-            mirror_base_global="${mirror_alarm_global}"
-            mirror_base_local="${mirror_alarm_local}"
-            ;;
-        'Loong Arch Linux @ loong64')
-            mirror_base_global='https://mirrors.wsyu.edu.cn/'"${mirror_loong_suffix}"
-            mirror_base_local="${mirror_local}"'/loongarch/'"${mirror_loong_suffix}"
-            ;;
-        *)
-            eval "${log_fatal}" || echo "Unknown distribution '$1' and architecture '$2' combination"
-            return 1
-            ;;
-    esac
+    if [[ "${mirror_local}" ]]; then
+        mirror_base="${mirror_local}/archlinux/${mirror_arch_suffix}"
+    else
+        mirror_base="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
+    fi
 }
+
+include_archlinux_x86_64() {
+    eval "${guard_include}"
+    include_archlinux
+}
+
+include_archlinux32() {
+    eval "${guard_include}"
+    require_architecture_target i486 pentium4 i686
+    if [[ -z "${mirror_local}" ]]; then
+        eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
+        return 1
+    fi
+    mirorr_base="${mirror_local}"'/archlinux32/$arch/$repo'
+}
+
+include_archlinux32_i486() {
+    eval "${guard_include}"
+    include_archlinux32
+}
+
+include_archlinux32_pentium4() {
+    eval "${guard_include}"
+    include_archlinux32
+}
+
+include_archlinux32_i686() {
+    eval "${guard_include}"
+    include_archlinux32
+}
+
+include_archlinuxarm() {
+    eval "${guard_include}"
+    require_architecture_target aarch64 armv7h
+    local mirror_alarm_suffix='$arch/$repo'
+    if [[ "${mirror_local}" ]]; then
+        mirror_base="${mirror_local}/archlinuxarm/${mirror_alarm_suffix}"
+    else
+        mirror_base='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
+    fi
+}
+
+include_archlinuxarm_aarch64() {
+    eval "${guard_include}"
+    include_archlinuxarm
+}
+
+include_archlinuxarm_armv7h() {
+    eval "${guard_include}"
+    include_archlinuxarm
+}
+
+include_loongarchlinux() {
+    eval "${guard_include}"
+    require_architecture_target loong64
+    if [[ -z "${mirror_local}" ]]; then
+        eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
+        return 1
+    fi
+    mirorr_base="${mirror_local}"'/loongarch/archlinux/$repo/os/$arch'
+}
+
+include_loongarchlinux_loong64() {
+    eval "${guard_include}"
+    include_loongarchlinux
+}
+
+include_archlinuxriscv() {
+    eval "${guard_include}"
+    require_architecture_target riscv64
+    if [[ "${mirror_local}" ]]; then
+        :
+    else
+        :
+    fi
+}
+
+include_archlinuxriscv_riscv64() {
+    eval "${guard_include}"
+    include_archlinuxriscv
+}
+
+include_archlinuxcn() {
+    eval "${guard_include}"
+}
+
+guard_include='local _included=included_${FUNCNAME#include_} && [[ "$included_${FUNCNAME#include_}" ]] && return || included_${FUNCNAME#include_}=1'
 
 get_bootloader() { #1: architecture
     case "$1" in
@@ -298,34 +413,50 @@ argparse() {
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--help)"
+    echo "  $0 builder (--arch-host [arch]) --arch-target [arch] (--mirror-local [parent]) (--help)"
     echo
-    echo '--help    print this help message'
+    printf -- '--%-25s %s\n' \
+        'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
+        'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
+        'help' 'print this help message' \
+        'mirror-local [parent]' 'the parent of local mirror, or public mirror sites fast and close to the builder, setting this enables local mirror instead of global, some repos need always this to be set, currently it is not possible to do this on a per-repo basis; default: [none]; e.g.: https://mirrors.mit.edu'
 
 }
 
 applet_builder() {
-    distribution="${AIMAGER_DISTRIBUTION}"
-    architecture="${AIMAGER_ARCHITECTURE}"
+    architecture_host=$(uname -m)
+    architecture_target=$(uname -m)
     while (( $# > 0 )); do
         case "$1" in
-        '--help')
-            help_builder
-            return 0
-            ;;
         '--distribution')
             distribution="$2"
             shift
             ;;
-        '--architecture')
-            architecture="$2"
+        '--arch-host')
+            architecture_host="$2"
+            shift
+            ;;
+        '--arch-target')
+            architecture_target="$2"
+            shift
+            ;;
+        '--help')
+            help_builder
+            return 0
+            ;;
+        '--mirror-local')
+            mirror_local="$2"
             shift
             ;;
         esac
     done
     PATH="${PWD}/bin:${PATH}"
+    time_start_builder=$(date +%s) || time_start_builder=''
     check_executables
-    eval "${log_debug}" || echo 'Hello there'
+    [[ -z ${time_start_builder} ]] && time_start_builder=$(date +%s)
+    eval "${log_info}" || echo "Builder work started at $(date -d @"${time_start_builder}")"
+    eval "${log_info}" || echo "Say hello to Mr.PacMan O<. ."
+    pacman --version
 }
 
 help_child() {
@@ -355,7 +486,20 @@ help_dispatch() {
     echo '--help    print this help message; for help about applets, write --help after [applet]'
 }
 
+use_namespace() { #1: namespace
+    local name
+    local prefix="$1::"
+    local len_prefix="${#prefix}"
+    for name in $(declare -F); do
+        if [[ "${name}" == "${prefix}"* ]]; then
+            echo "Exporting ${name} to root namespace"
+            alias "${name:${len_prefix}}"="${name}"
+        fi
+    done
+}
+
 assert_errexit
+
 case "$1" in
 'builder')
     applet_builder "${@:2}"
