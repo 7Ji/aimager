@@ -141,7 +141,10 @@ check_executables() {
     check_executable_must_exist tar 'extract file from archives'
     check_executable_must_exist uname 'dump machine architecture'
     check_executable_must_exist unshare 'unshare child process to do rootless stuffs'
-    check_executable pacman 'install packages' get_pacman_static
+    check_executable pacman 'install packages' update_pacman_static
+    if [[ -f cache/bin/pacman ]]; then
+        update_pacman_static
+    fi
 }
 
 download() { # 1: url, 2: path, 3: mod
@@ -157,48 +160,57 @@ touched_after_start() { #1: path
     [[ $(stat -c '%Y' "$1" 2>/dev/null) -ge "${time_start_builder}" ]]
 }
 
-get_repo_db() { #1: repo url, 2: repo name
-    path_db="cache/repo/$2.db"
-    touched_after_start "${path_db}" && return
-    download "$1/$2.db" "${path_db}"
+get_repo_db() { #1: repo url, 2: repo name, 3: arch
+    mirror_format "$1" "$2" "$3"
+    db_path="cache/repo/$2:$3.db"
+    touched_after_start "${db_path}" && return
+    download "${mirror_formatted}/$2.db" "${db_path}"
 }
 
-get_repo_pkg() { #1: repo url, 2: repo name, 3: package
-    get_repo_db "$1" "$2"
+get_repo_pkg() { #1: repo url, 2: repo name, 3: arch, 4: package
+    get_repo_db "$1" "$2" "$3"
     pkg_ver=
-    pkg_file=
+    local pkg_file_remote=
     local line= pkg_name=
-    for line in $(tar -xOf "${path_db}" --wildcards "$3"'-*/desc' | sed -n '/%FILENAME/{n;p;};/%NAME%/{n;p;};/%VERSION%/{n;p;}'); do
-        [[ -z "${pkg_file}" ]] && pkg_file="${line}" && continue
+    for line in $(tar -xOf "${db_path}" --wildcards "$4"'-*/desc' | sed -n '/%FILENAME/{n;p;};/%NAME%/{n;p;};/%VERSION%/{n;p;}'); do
+        [[ -z "${pkg_file_remote}" ]] && pkg_file_remote="${line}" && continue
         [[ -z "${pkg_name}" ]] && pkg_name="${line}" && continue
         pkg_ver="${line}"
-        [[ "${pkg_name}" == "$3" ]] && break
-        pkg_file=
+        [[ "${pkg_name}" == "$4" ]] && break
+        pkg_file_remote=
         pkg_name=
     done
-    if [[ "${pkg_name}" != "$3" ]] || [[ -z "${pkg_file}" ]] || [[ -z "${pkg_ver}" ]]; then
-        eval "${log_error}" || echo "Failed to get package '$3' from repo '$2' at '$1'"
+    if [[ "${pkg_name}" != "$4" ]] || [[ -z "${pkg_file_remote}" ]] || [[ -z "${pkg_ver}" ]]; then
+        eval "${log_error}" || echo "Failed to get package '$4' of arch '$3' from repo '$2' at '$1'"
         return 1
     fi
-    eval "${log_info}" || echo "Latest '$3' from repo '$2' at '$1' is at version '${pkg_ver}'"
-    path_pkg=cache/pkg/"${pkg_file}"
-    if [[ -f "${path_pkg}" ]]; then
-        eval "${log_info}" || echo "Skipped downloading as '${path_pkg}' already exists locally"
+    eval "${log_info}" || echo "Latest '$4' of arch '$3' from repo '$2' at '$1' is at version '${pkg_ver}'"
+    pkg_file_local="$2:$3:${pkg_file_remote}"
+    pkg_path=cache/pkg/"${pkg_file_local}"
+    if [[ -f "${pkg_path}" ]]; then
+        eval "${log_info}" || echo "Skipped downloading as '${pkg_path}' already exists locally"
         return
     fi
-    download "$1/${pkg_file}" "${path_pkg}"
+    download "${mirror_formatted}/${pkg_file_remote}" "${pkg_path}"
 }
 
-get_repo_pkg_file() { #1: repo url, 2: repo name, 3: package, 4: file path
-    get_repo_pkg "$1" "$2" "$3"
-    tar -C cache/pkg -xf "${pkg_file}" "$4"
+get_repo_pkg_file() { #1: repo url, 2: repo name, 3: arch, 4: package, 5: file path
+    get_repo_pkg "$1" "$2" "$3" "$4"
+    pkg_dir_path="${pkg_path%.pkg.tar*}"
+    mkdir -p "${pkg_dir_path}"
+    tar -C "${pkg_dir_path}" -xf "cache/pkg/${pkg_file_local}" "$5"
 }
 
-get_pacman_static() {
-    eval "${log_info}" || echo 'Trying to get latest pacman-static from archlinuxcn repo'
+update_pacman_static() {
+    eval "${log_info}" || echo 'Trying to update pacman-static from archlinuxcn repo'
+    if touched_after_start cache/bin/pacman; then
+        eval "${log_info}" || echo 'Local pacman-static was already updated during this run, no need to update'
+        return
+    fi
     configure_archlinuxcn
-    get_repo_pkg_file "${mirror_archlinuxcn}"/x86_64 archlinuxcn pacman-static usr/bin/pacman-static
-    ln -sf "../pkg/$3-${pkg_ver}/$4" cache/bin/pacman
+    get_repo_pkg_file "${mirror_archlinuxcn}" archlinuxcn "${architecture_host}" pacman-static usr/bin/pacman-static
+    mkdir -p cache/bin
+    ln -sf "../pkg/${pkg_dir_path#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
 }
 # check_executables() {
 #     local executables=(
@@ -301,7 +313,7 @@ configure_archlinux() {
 
 configure_archlinux_x86_64() {
     eval "${guard_configure}"
-    configure_archlinuxcn
+    configure_archlinux
 }
 
 configure_archlinux32() {
@@ -382,12 +394,21 @@ configure_archlinuxriscv_riscv64() {
 
 configure_archlinuxcn() {
     eval "${guard_configure}"
-    local mirror_suffix='$arch/$repo'
     if [[ "${mirror_local}" ]]; then
-        mirror_archlinuxcn="${mirror_local}/archlinuxcn/${mirror_suffix}"
+        mirror_archlinuxcn="${mirror_local}/archlinuxcn/"'$arch'
     else
-        mirror_archlinuxcn='https://repo.archlinuxcn.org/'"${mirror_suffix}"
+        mirror_archlinuxcn='https://repo.archlinuxcn.org/$arch'
     fi
+}
+
+mirror_format() { #1 mirror url, #2 repo, #3 arch
+    local mirror="${1/\$repo/$2}"
+    mirror_formatted="${mirror/\$arch/$3}"
+}
+
+mirror_format_stdout() {
+    mirror_format "$@"
+    echo "${mirror_formatted}"
 }
 
 get_bootloader() { #1: architecture
@@ -450,7 +471,7 @@ applet_builder() {
         shift
     done
     time_start_builder=$(date +%s) || time_start_builder=''
-    PATH="${PWD}/cache/bin:${PATH}"
+    export PATH="${PWD}/cache/bin:${PATH}" LANG=C
     check_executables
     [[ -z ${time_start_builder} ]] && time_start_builder=$(date +%s)
     eval "${log_info}" || echo "Builder work started at $(date -d @"${time_start_builder}")"
