@@ -146,7 +146,7 @@ check_executables() {
 
 download() { # 1: url, 2: path, 3: mod
     rm -f "$2"{,.temp}
-    echo -n | install -Dm"${3:-755}" /dev/stdin "$2".temp
+    echo -n | install -Dm"${3:-644}" /dev/stdin "$2".temp
     eval "${log_info}" || echo "Downloading '$2' < '$1'"
     curl -qgb "" -fL --retry 3 --retry-delay 3 -o "$2".temp "$1" || return 1
     eval "${log_info}" || echo "Downloaded '$2' <= '$1'"
@@ -189,22 +189,16 @@ get_repo_pkg() { #1: repo url, 2: repo name, 3: package
     download "$1/${pkg_file}" "${path_pkg}"
 }
 
-get_repo_pkg_file() { #1: repo url, 2: repo name, 3: package, 4: file path, 5: mod
-    # local path_file="cache/pkg/$3/$4"
-    # if touched_after_start "${path_file}"; then
-    #     chmod "${5:-644}" "${path_file}"
-    #     return
-    # fi
+get_repo_pkg_file() { #1: repo url, 2: repo name, 3: package, 4: file path
     get_repo_pkg "$1" "$2" "$3"
-    path_file="cache/pkg/$3-${pkg_ver}/$4"
-    tar -xOf "cache/pkg/${pkg_file}" "$4" |
-        install -Dm"${5:-644}" /dev/stdin "${path_file}"
+    tar -C cache/pkg -xf "${pkg_file}" "$4"
 }
 
 get_pacman_static() {
     eval "${log_info}" || echo 'Trying to get latest pacman-static from archlinuxcn repo'
-    get_repo_pkg_file http://repo.7ji.lan/archlinuxcn/x86_64 archlinuxcn pacman-static usr/bin/pacman-static 755
-    eval 'pacman() { '"'${path_file}'"' "$@"; }'
+    configure_archlinuxcn
+    get_repo_pkg_file "${mirror_archlinuxcn}"/x86_64 archlinuxcn pacman-static usr/bin/pacman-static
+    ln -sf "../pkg/$3-${pkg_ver}/$4" cache/bin/pacman
 }
 # check_executables() {
 #     local executables=(
@@ -307,7 +301,7 @@ configure_archlinux() {
 
 configure_archlinux_x86_64() {
     eval "${guard_configure}"
-    configure_archlinux
+    configure_archlinuxcn
 }
 
 configure_archlinux32() {
@@ -388,9 +382,13 @@ configure_archlinuxriscv_riscv64() {
 
 configure_archlinuxcn() {
     eval "${guard_configure}"
+    local mirror_suffix='$arch/$repo'
+    if [[ "${mirror_local}" ]]; then
+        mirror_archlinuxcn="${mirror_local}/archlinuxcn/${mirror_suffix}"
+    else
+        mirror_archlinuxcn='https://repo.archlinuxcn.org/'"${mirror_suffix}"
+    fi
 }
-
-guard_configure='local _included=configured_${FUNCNAME#configure_} && [[ "$configured_${FUNCNAME#configure_}" ]] && return || configured_${FUNCNAME#configure_}=1'
 
 get_bootloader() { #1: architecture
     case "$1" in
@@ -449,9 +447,10 @@ applet_builder() {
             shift
             ;;
         esac
+        shift
     done
-    PATH="${PWD}/bin:${PATH}"
     time_start_builder=$(date +%s) || time_start_builder=''
+    PATH="${PWD}/cache/bin:${PATH}"
     check_executables
     [[ -z ${time_start_builder} ]] && time_start_builder=$(date +%s)
     eval "${log_info}" || echo "Builder work started at $(date -d @"${time_start_builder}")"
