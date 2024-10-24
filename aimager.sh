@@ -225,33 +225,6 @@ update_pacman_static() {
     mkdir -p cache/bin
     ln -sf "../pkg/${pkg_dir_path#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
 }
-# check_executables() {
-#     local executables=(
-#         'curl:download files from Internet'
-#     )
-#     local executable type_executable name_executable hint_executable
-#     for executable in "${executables[@]}" ; do
-#         name_executable="${executable%%:*}"
-#         hint_executable="${executable#*:}"
-#         if ! type_executable=$(type -t "${name_executable}"); then
-#             eval "${log_fatal}" || echo "Could not find needed executable \"${name_executable}\". It's needed to ${hint_executable}."
-#             return 1
-#         fi
-#         if [[ "${type_executable}" != 'file' ]]; then
-#             eval "${log_fatal}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to ${hint_executable}."
-#             return 1
-#         fi
-#     done
-# }
-
-argparse_main() {
-    while ((  $# > 0 )); do
-
-
-
-        shift
-    done
-}
 
 assert_errexit() {
     if [[ $- != *e* ]]; then
@@ -303,25 +276,70 @@ no_source() {
 source() { no_source; }
 .() { no_source; }
 
+board_x64_uefi() {
+    distribution='Arch Linux'
+    architecture_target='x86_64'
+    bootloader='systemd-boot'
+}
+
+board_x86_legacy() {
+    distribution='Arch Linux 32'
+    architecture_target='i686'
+    bootloader='syslinux'
+}
+
+_board_orangepi_5_family() {
+    distribution='Arch Linux ARM'
+    architecture_target='aarch64'
+    bootloader='u-boot'
+}
+
+board_orangepi_5() {
+    _board_orangepi_5_family
+}
+
+board_orangepi_5_plus() {
+    _board_orangepi_5_family
+}
+
+board_orangepi_5_max() {
+    _board_orangepi_5_family
+}
+
+board_orangepi_5_pro() {
+    _board_orangepi_5_family
+}
+
 guard_configure='declare -n guard="configured_${FUNCNAME#configure_}" && [[ "${guard}" ]] && return || guard=1'
 
-require_architecture_host() {
-    :
+configure_archlinuxcn() {
+    eval "${guard_configure}"
+    if [[ "${mirror_local}" ]]; then
+        mirror_archlinuxcn="${mirror_local}/archlinuxcn/"'$arch'
+    else
+        mirror_archlinuxcn='https://repo.archlinuxcn.org/$arch'
+    fi
 }
 
 require_architecture_target() {
-    :
+    local architecture
+    for architecture in "$@"; do
+        if [[ "${architecture_target}" == "${architecture}" ]]; then
+            return
+        fi
+    done
+    eval "${log_error}" || echo "${distribution_stylised} requires target architecture to be one of $@"
 }
 
-configure_common() {
-    eval "${guard_configure}"
-    repo_core=core # The one containing pacman and pacman-mirrorlist
+_distribution_common() {
+    repo_core="${repo_core:-core}"
 }
 
-configure_archlinux() {
-    eval "${guard_configure}"
+distribution_archlinux() {
+    distribution_stylised='Arch Linux'
+    distribution_safe='archlinux'
     require_architecture_target x86_64
-    configure_common
+    _distribution_common
     local mirror_arch_suffix='$repo/os/$arch'
     if [[ "${mirror_local}" ]]; then
         mirror_base="${mirror_local}/archlinux/${mirror_arch_suffix}"
@@ -330,41 +348,24 @@ configure_archlinux() {
     fi
 }
 
-configure_archlinux_x86_64() {
-    eval "${guard_configure}"
-    configure_archlinux
-}
-
-configure_archlinux32() {
-    eval "${guard_configure}"
+distribution_archlinux32() {
+    distribution_stylised='Arch Linux 32'
+    distribution_safe='archlinux32'
     require_architecture_target i486 pentium4 i686
-    configure_common
-    if [[ -z "${mirror_local}" ]]; then
+    _distribution_common
+    if [[ "${mirror_local}" ]]; then
+        mirorr_base="${mirror_local}"'/archlinux32/$arch/$repo'
+    else
         eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
         return 1
     fi
-    mirorr_base="${mirror_local}"'/archlinux32/$arch/$repo'
 }
 
-configure_archlinux32_i486() {
-    eval "${guard_configure}"
-    configure_archlinux32
-}
-
-configure_archlinux32_pentium4() {
-    eval "${guard_configure}"
-    configure_archlinux32
-}
-
-configure_archlinux32_i686() {
-    eval "${guard_configure}"
-    configure_archlinux32
-}
-
-configure_archlinuxarm() {
-    eval "${guard_configure}"
+distribution_archlinuxarm() {
+    distribution_stylised='Arch Linux ARM'
+    distribution_safe='archlinuxarm'
     require_architecture_target aarch64 armv7h
-    configure_common
+    _distribution_common
     local mirror_alarm_suffix='$arch/$repo'
     if [[ "${mirror_local}" ]]; then
         mirror_base="${mirror_local}/archlinuxarm/${mirror_alarm_suffix}"
@@ -373,54 +374,28 @@ configure_archlinuxarm() {
     fi
 }
 
-configure_archlinuxarm_aarch64() {
-    eval "${guard_configure}"
-    configure_archlinuxarm
-}
-
-configure_archlinuxarm_armv7h() {
-    eval "${guard_configure}"
-    configure_archlinuxarm
-}
-
-configure_loongarchlinux() {
-    eval "${guard_configure}"
+distribution_loongarchlinux() {
+    distribution_stylised='Loong Arch Linux'
+    distribution_safe='loongarchlinux'
     require_architecture_target loong64
-    configure_common
-    if [[ -z "${mirror_local}" ]]; then
+    _distribution_common
+    if [[ "${mirror_local}" ]]; then
+        mirorr_base="${mirror_local}"'/loongarch/archlinux/$repo/os/$arch'
+    else
         eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
         return 1
     fi
-    mirorr_base="${mirror_local}"'/loongarch/archlinux/$repo/os/$arch'
 }
 
-configure_loongarchlinux_loong64() {
-    eval "${guard_configure}"
-    configure_loongarchlinux
-}
-
-configure_archlinuxriscv() {
-    eval "${guard_configure}"
+distribution_archriscv() {
+    distribution_stylised='Arch Linux RISC-V'
+    distribution_safe='archriscv'
     require_architecture_target riscv64
-    configure_common
+    _distribution_common
     if [[ "${mirror_local}" ]]; then
-        :
+        mirror_base="${mirror_local}"'/archriscv/repo/$repo'
     else
-        :
-    fi
-}
-
-configure_archlinuxriscv_riscv64() {
-    eval "${guard_configure}"
-    configure_archlinuxriscv
-}
-
-configure_archlinuxcn() {
-    eval "${guard_configure}"
-    if [[ "${mirror_local}" ]]; then
-        mirror_archlinuxcn="${mirror_local}/archlinuxcn/"'$arch'
-    else
-        mirror_archlinuxcn='https://repo.archlinuxcn.org/$arch'
+        mirror_base='https://riscv.mirror.pkgbuild.com/repo/$repo'
     fi
 }
 
@@ -434,46 +409,9 @@ mirror_format_stdout() {
     echo "${mirror_formatted}"
 }
 
-board_x64_uefi() {
-    distribution='Arch Linux'
-    architecture_target='x86_64'
-    bootloader='systemd-boot'
-}
-
-board_x86_legacy() {
-    distribution='Arch Linux 32'
-    architecture_target='i686'
-    bootloader='syslinux'
-}
-
-board_orangepi_5_family() {
-    distribution='Arch Linux ARM'
-    architecture_target='aarch64'
-    bootloader='u-boot'
-}
-
-board_orangepi_5() {
-    board_orangepi_5_family
-}
-
-board_orangepi_5_plus() {
-    board_orangepi_5_family
-}
-
-board_orangepi_5_max() {
-    board_orangepi_5_family
-}
-
-board_orangepi_5_pro() {
-    board_orangepi_5_family
-}
-
 builder() {
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
     time_start_builder=$(date +%s) || time_start_builder=''
-    check_executables
-    check_date_locale
-    eval "${log_info}" || echo "Dispatch to prebuild logic. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
     case "${board}" in
     'help')
         local name prefix=board_ boards=()
@@ -491,6 +429,7 @@ builder() {
             "${board_func}"
         else
             eval "${log_error}" || echo "Board '${board}' is not supported, pass --board help to get a list of supported boards"
+            return 1
         fi
     esac
     case "${distribution}" in
@@ -504,90 +443,33 @@ builder() {
         return
         ;;
     'Arch Linux'|'archlinux'|'arch')
-        distribution_stylised='Arch Linux'
-        distribution_safe='archlinux'
-        case "${architecture_target}" in
-        'x86_64')
-            configure_archlinux_x86_64
-            ;;
-        *)
-            eval "${log_error}" || echo "Arch Linux only supports x86_64. ${architecture_target} is not supported!"
-            return 1
-            ;;
-        esac
+        distribution_archlinux
         ;;
     'Arch Linux 32'|'archlinux32'|'arch32')
-        distribution_stylised='Arch Linux 32'
-        distribution_safe='archlinux32'
-        case "${architecture_target}" in
-        'i486')
-            configure_archlinux32_i486
-            ;;
-        'pentium4')
-            configure_archlinux32_pentium4
-            ;;
-        'i686')
-            configure_archlinux32_i686
-            ;;
-        *)
-            eval "${log_error}" || echo "Arch Linux 32 only supports i486, pentium4 and i686. ${architecture_target} is not supported!"
-            return 1
-            ;;
-        esac
+        distribution_archlinux32
         ;;
     'Arch Linux ARM'|'archlinuxarm'|'archarm'|'alarm')
-        distribution_stylised='Arch Linux ARM'
-        distribution_safe='archlinuxarm'
-        case "${architecture_target}" in
-        'armv7h')
-            configure_archlinuxarm_armv7h
-            ;;
-        'aarch64')
-            configure_archlinuxarm_aarch64
-            ;;
-        *)
-            eval "${log_error}" || echo "Arch Linux ARM only supports armv7h and aarch64. ${architecture_target} is not supported!"
-            return 1
-            ;;
-        esac
+        distribution_archlinuxarm
         ;;
     'Loong Arch Linux'|'loongarchlinux'|'loongarch')
-        distribution_stylised='Loong Arch Linux'
-        distribution_safe='loongarchlinux'
-        case "${architecture_target}" in
-        'loongarch64'|'loong64')
-            architecture_target=loong64
-            configure_loongarchlinux_loong64
-            ;;
-        *)
-            eval "${log_error}" || echo "Longo Arch Linux only supports loongarch64 (alias long64). ${architecture_target} is not supported!"
-            return 1
-            ;;
-        esac
+        distribution_loongarchlinux
         ;;
     'Arch Linux RISC-V'|'archlinuxriscv'|'archriscv')
-        distribution_stylised='Arch Linux RISC-V'
-        distribution_safe='archlinuxriscv'
-        case "${architecture_target}" in
-        'riscv64')
-            configure_archlinuxriscv_riscv64
-            ;;
-        *)
-            eval "${log_error}" || echo "Arch Linux RISC-V only supports riscv64. ${architecture_target} is not supported!"
-            return 1
-            ;;
-        esac
+        distribution_archriscv
         ;;
     *)
         eval "${log_error}" || echo "Unsupported distribution '${distribution}', use --disto help to check the list of supported distributions"
         ;;
     esac
+    check_executables
+    check_date_locale
+    eval "${log_info}" || echo "Dispatch to prebuild logic. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
 }
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--mirror-local [parent]) (--help)"
+    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
     printf -- '--%-23s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
@@ -595,13 +477,16 @@ help_builder() {
         'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, pass a special value "help" to get a list of supported boards' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
         'help' 'print this help message' \
-        'mirror-local [parent]' 'the parent of local mirror, or public mirror sites fast and close to the builder, setting this enables local mirror instead of global, some repos need always this to be set, currently it is not possible to do this on a per-repo basis; default: [none]; e.g.: https://mirrors.mit.edu'
-
+        'initrd-maker' 'the initrd/initcpio/initramfs maker, pass a special value "help" to get a list of supported initrd makers, default: booster' \
+        'mirror-local [parent]' 'the parent of local mirror, or public mirror sites fast and close to the builder, setting this enables local mirror instead of global, some repos need always this to be set, currently it is not possible to do this on a per-repo basis; default: [none]; e.g.: https://mirrors.mit.edu' \
+        'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
+        'repo-core [repo]' 'the name of core repo, this is used to dump etc/pacman.conf from the pacman package; default: core'
 }
 
 applet_builder() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
+    repos_add=()
     while (( $# > 0 )); do
         case "$1" in
         '--arch-host')
@@ -624,8 +509,20 @@ applet_builder() {
             help_builder
             return 0
             ;;
+        '--inird-maker')
+            initrd_maker="$2"
+            shift
+            ;;
         '--mirror-local')
             mirror_local="$2"
+            shift
+            ;;
+        '--repo-add')
+            repos_add+=("$2")
+            shift
+	    ;;
+        '--repo-core')
+            repo_core="$2"
             shift
             ;;
         esac
