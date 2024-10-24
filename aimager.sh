@@ -145,6 +145,8 @@ check_executables() {
     if [[ -f cache/bin/pacman ]]; then
         update_pacman_static
     fi
+    eval "${log_info}" || echo "Say hello to our hero Pacman O<. ."
+    pacman --version
 }
 
 check_date_locale() {
@@ -432,15 +434,65 @@ mirror_format_stdout() {
     echo "${mirror_formatted}"
 }
 
+board_x64_uefi() {
+    distribution='Arch Linux'
+    architecture_target='x86_64'
+    bootloader='systemd-boot'
+}
+
+board_x86_legacy() {
+    distribution='Arch Linux 32'
+    architecture_target='i686'
+    bootloader='syslinux'
+}
+
+board_orangepi_5_family() {
+    distribution='Arch Linux ARM'
+    architecture_target='aarch64'
+    bootloader='u-boot'
+}
+
+board_orangepi_5() {
+    board_orangepi_5_family
+}
+
+board_orangepi_5_plus() {
+    board_orangepi_5_family
+}
+
+board_orangepi_5_max() {
+    board_orangepi_5_family
+}
+
+board_orangepi_5_pro() {
+    board_orangepi_5_family
+}
 
 builder() {
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
     time_start_builder=$(date +%s) || time_start_builder=''
     check_executables
     check_date_locale
-    eval "${log_info}" || echo "$(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
-    eval "${log_info}" || echo "Say hello to Mr.PacMan O<. ."
-    pacman --version
+    eval "${log_info}" || echo "Dispatch to prebuild logic. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
+    case "${board}" in
+    'help')
+        local name prefix=board_ boards=()
+        for name in $(declare -F); do
+            if [[ "${name}" == "${prefix}"* && ${#name} -gt 6 ]]; then
+                boards+=("${name:6}")
+            fi
+        done
+        eval "${log_info}" || echo "Available boards: ${boards[@]}"
+        return
+        ;;
+    *)
+        local board_func="board_${board/-/_}"
+        if [[ $(type -t "${board_func}") == function ]]; then
+            "${board_func}"
+        else
+            eval "${log_error}" || echo "Board '${board}' is not supported, pass --board help to get a list of supported boards"
+        fi
+    esac
     case "${distribution}" in
     'help')
         eval "${log_info}" || echo 'Supported distribution and their supported target architectures:'
@@ -535,11 +587,12 @@ builder() {
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --distro [distro] (--mirror-local [parent]) (--help)"
+    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--mirror-local [parent]) (--help)"
     echo
-    printf -- '--%-25s %s\n' \
+    printf -- '--%-23s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
         'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
+        'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, pass a special value "help" to get a list of supported boards' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
         'help' 'print this help message' \
         'mirror-local [parent]' 'the parent of local mirror, or public mirror sites fast and close to the builder, setting this enables local mirror instead of global, some repos need always this to be set, currently it is not possible to do this on a per-repo basis; default: [none]; e.g.: https://mirrors.mit.edu'
@@ -551,16 +604,20 @@ applet_builder() {
     architecture_target=$(uname -m)
     while (( $# > 0 )); do
         case "$1" in
-        '--distro')
-            distribution="$2"
-            shift
-            ;;
         '--arch-host')
             architecture_host="$2"
             shift
             ;;
         '--arch-target')
             architecture_target="$2"
+            shift
+            ;;
+        '--board')
+            board="$2"
+            shift
+            ;;
+        '--distro')
+            distribution="$2"
             shift
             ;;
         '--help')
