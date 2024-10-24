@@ -147,6 +147,17 @@ check_executables() {
     fi
 }
 
+check_date_locale() {
+    if [[ -z "${time_start_builder}" ]]; then
+        eval "${log_error}" || echo "Start time was not recorded, please check your 'date' installation"
+        return 1
+    fi
+    if [[ "${LANG}$(LANG=C date -d @0)" != 'CThu Jan  1 08:00:00 CST 1970' ]]; then
+        eval "${log_error}" || echo "Current locale was not in C or not correctly in C. The following is a date example and it's not in strict C manner: $(date)"
+        return 1
+    fi
+}
+
 download() { # 1: url, 2: path, 3: mod
     rm -f "$2"{,.temp}
     echo -n | install -Dm"${3:-644}" /dev/stdin "$2".temp
@@ -470,11 +481,11 @@ applet_builder() {
         esac
         shift
     done
-    time_start_builder=$(date +%s) || time_start_builder=''
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
+    time_start_builder=$(date +%s) || time_start_builder=''
     check_executables
-    [[ -z ${time_start_builder} ]] && time_start_builder=$(date +%s)
-    eval "${log_info}" || echo "Builder work started at $(date -d @"${time_start_builder}")"
+    check_date_locale
+    eval "${log_info}" || echo "$(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
     eval "${log_info}" || echo "Say hello to Mr.PacMan O<. ."
     pacman --version
 }
