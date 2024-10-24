@@ -1,7 +1,7 @@
 # WORK IN PROGRESS, DO NOT USE!!!
 
+<!-- This is commented out.
 # aimager (ArchLinux Imager)
-
 A rootless distro-independent and architecture-independent Arch Linux and Arch-derive image builder
 
 ## Design principals
@@ -32,3 +32,4 @@ Most of the limitations come from the fact that the builder runs rootlessly
 - No btrfs subvolumes
   - As we run rootlessly we can only use `mkfs.btrfs -r/--rootdir` to pre-populate a btrfs partition
 - No 
+<-->
