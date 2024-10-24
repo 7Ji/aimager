@@ -142,7 +142,7 @@ check_executables() {
     check_executable_must_exist uname 'dump machine architecture'
     check_executable_must_exist unshare 'unshare child process to do rootless stuffs'
     check_executable pacman 'install packages' update_pacman_static
-    if [[ -f cache/bin/pacman ]]; then
+    if [[ -f cache/bin/pacman && -z "${freeze_pacman}" ]] ; then
         update_pacman_static
     fi
     eval "${log_info}" || echo "Say hello to our hero Pacman O<. ."
@@ -469,13 +469,14 @@ builder() {
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
+    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
     printf -- '--%-23s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
         'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
         'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, pass a special value "help" to get a list of supported boards' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
+        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman online if we already downloaded it previously' \
         'help' 'print this help message' \
         'initrd-maker' 'the initrd/initcpio/initramfs maker, pass a special value "help" to get a list of supported initrd makers, default: booster' \
         'mirror-local [parent]' 'the parent of local mirror, or public mirror sites fast and close to the builder, setting this enables local mirror instead of global, some repos need always this to be set, currently it is not possible to do this on a per-repo basis; default: [none]; e.g.: https://mirrors.mit.edu' \
@@ -505,6 +506,9 @@ applet_builder() {
             distribution="$2"
             shift
             ;;
+        '--freeze-pacman')
+            freeze_pacman='yes'
+            ;;
         '--help')
             help_builder
             return 0
@@ -520,7 +524,7 @@ applet_builder() {
         '--repo-add')
             repos_add+=("$2")
             shift
-	    ;;
+	        ;;
         '--repo-core')
             repo_core="$2"
             shift
