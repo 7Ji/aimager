@@ -152,7 +152,7 @@ check_date_locale() {
         eval "${log_error}" || echo "Start time was not recorded, please check your 'date' installation"
         return 1
     fi
-    if [[ "${LANG}$(LANG=C date -d @0)" != 'CThu Jan  1 08:00:00 CST 1970' ]]; then
+    if [[ "${LANG}$(LANG=C date -ud @0)" != 'CThu Jan  1 00:00:00 UTC 1970' ]]; then
         eval "${log_error}" || echo "Current locale was not in C or not correctly in C. The following is a date example and it's not in strict C manner: $(date)"
         return 1
     fi
