@@ -282,6 +282,7 @@ prepare_pacman_conf() {
     local config_tail=$(printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}")
     printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'Never' "${config_tail}" > cache/etc/pacman-loose.conf
     printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" > cache/etc/pacman-strict.conf
+    eval "${log_info}" || echo "Generated loose config at 'cache/etc/pacman-loose.conf' and strict config at 'cache/etc/pacman-strict.conf'"
 }
 
 assert_errexit() {
@@ -544,6 +545,18 @@ builder_check() {
     eval "${log_info}" || echo "Builder check complete. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
 }
 
+binfmt_check() {
+    if [[ "${architecture_target}" == loong64 ]]; then
+        local architecture_target=loongarch64
+    fi
+    if [[ "${architecture_host}" != "${architecture_target}" ]]; then
+        eval "${log_warn}" || echo "Host architecture ${architecture_host} != target architecture ${architecture_target}, checking if we have binfmt ready"
+        eval "${log_info}" || echo "Running the following test command: 'sh -c \"cd test/binfmt; ./test.sh ${architecture_target}\"'"
+        sh -c 'cd test/binfmt; ./test.sh '"${architecture_target}"
+        pwd
+    fi
+}
+
 builder_work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
     prepare_pacman_conf
@@ -551,17 +564,22 @@ builder_work() {
 
 builder() {
     builder_configure
+    if  [[ "${run_binfmt_check}" ]]; then
+        binfmt_check
+        return
+    fi
     builder_check
     builder_work
 }
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
+    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
     printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
         'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
+        'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
         'board [board]' 'specify a board name, which would optionally define --arch-target, --distro and other options, pass a special value "none" to define nothing, pass a special value "help" to get a list of supported boards; default: none' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
         'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously' \
@@ -592,6 +610,7 @@ applet_builder() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
     board=none
+    run_binfmt_check=''
     repos_base=()
     local args_original="$@"
     while (( $# > 0 )); do
@@ -611,6 +630,9 @@ applet_builder() {
             fi
             board="$2"
             shift
+            ;;
+        '--binfmt-check')
+            run_binfmt_check='yes'
             ;;
         '--distro')
             if [[ "$2" == 'help' ]]; then

@@ -18,5 +18,9 @@ do
 	fi
 	printf '\trm -f hello-%s\n' "$arch"
 done >> Makefile
-make
+if [[ "$1" ]]; then
+	make test-"$1"
+else
+	make
+fi
 rm -f Makefile hello-*
