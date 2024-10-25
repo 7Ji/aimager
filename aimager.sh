@@ -576,6 +576,18 @@ help_builder() {
         ''
 }
 
+report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining args
+    echo "$1 $2"
+    local args_remaining_collapsed="${@:3}"
+    printf "%$(( ${#1} + ${#2} - ${#args_remaining_collapsed} ))s^"
+    local len="${#3}"
+    while (( $len )); do
+        echo -n '~'
+        let len--
+    done
+    echo
+}
+
 applet_builder() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
@@ -637,17 +649,8 @@ applet_builder() {
             ;;
         *)
             if ! eval "${log_error}"; then
-                echo "Unknown argument '$1':"
-                local args_original_collapsed="${args_original[*]}"
-                echo "./aimager.sh builder ${args_original_collapsed}"
-                local args_remaining_collapsed="$*"
-                printf "%$(( 21 + ${#args_original_collapsed} - ${#args_remaining_collapsed} ))s^"
-                local len="${#1}"
-                while (( $len )); do
-                    echo -n '~'
-                    let len--
-                done
-                echo
+                echo "Unknown argument '$1'"
+                report_wrong_arg './aimager builder' "${args_original[*]}" "$@"
             fi
             return 1
             ;;
@@ -665,13 +668,20 @@ help_child() {
 }
 
 applet_child() {
+    local args_original="$@"
     while (( $# > 0 )); do
         case "$1" in
         '--help')
             help_child
             return 0
             ;;
-
+        *)
+            if ! eval "${log_error}"; then
+                echo "Unknown argument '$1'"
+                report_wrong_arg './aimager child' "${args_original[*]}" "$@"
+            fi
+            return 1
+            ;;
         esac
     done
 }
@@ -709,7 +719,7 @@ case "$1" in
     help_dispatch
     ;;
 *)
-    eval "${log_warn}" || echo "Unknown applet '$1', printing help message instead"
+    eval "${log_error}" || echo "Unknown applet '$1', printing help message instead"
     help_dispatch
     ;;
 esac
