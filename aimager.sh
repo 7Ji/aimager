@@ -226,6 +226,64 @@ update_pacman_static() {
     ln -sf "../pkg/${pkg_dir_path#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
 }
 
+prepare_pacman_conf() {
+    eval "${log_info}" || echo "Preparing pacman configs from ${distribution_stylised} repo at '${repo_url_base}'"
+    if touched_after_start cache/etc/pacman-strict.conf &&
+        touched_after_start cache/etc/pacman-loose.conf
+    then
+        eval "${log_info}" || echo 'Local pacman configs were already updated during this run, no need to update'
+        return
+    fi
+    get_repo_pkg_file "${repo_url_base}" "${repo_core}" "${architecture_target}" pacman etc/pacman.conf
+    mkdir -p cache/etc
+
+    local repo_base has_core=
+    if (( "${#repos_base}" )); then
+        for repo_base in "${repos_base[@]}"; do
+            case "${repo_base}" in
+            options)
+                eval "${log_error}" || echo "User-defined base repo contains 'options' which is not allowed: ${repos_base[@]}"
+                return 1
+                ;;
+            "${repo_core}")
+                has_core='yes'
+                ;;
+            esac
+        done
+    else
+        for repo_base in $(sed -n 's/^\[\(.\+\)\]$/\1/p' < "${pkg_dir_path}/etc/pacman.conf"); do
+            case "${repo_base}" in
+            options)
+                continue
+                ;;
+            "${repo_core}")
+                has_core='yes'
+                ;;
+            esac
+            repos_base+=("${repo_base}")
+        done
+    fi
+    if [[ -z "${has_core}" ]]; then
+        eval "${log_error}" || echo "Core repo '${repo_core}' was not found in base repos: ${repos_base[@]}"
+        return 1
+    fi
+    eval "${log_info}" || echo "Distribution ${distribution_stylised} has the following base repos: ${repos_base[@]}"
+    local config_head=$(
+        echo '[options]'
+        printf '%-13s= %s\n' \
+            'RootDir' 'cache/root' \
+            'DBPath' 'cache/root/var/lib/pacman/' \
+            'CacheDir' 'cache/pkg/'"${distribution_safe}:${architecture_target}" \
+            'LogFile' 'cache/root/var/log/pacman.log' \
+            'GPGDir' 'cache/root/etc/pacman.d/gnupg' \
+            'HookDir' 'cache/root/etc/pacman.d/hooks' \
+            'Architecture' "${architecture_target}"
+    )
+    local config_tail=$(printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}")
+    printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'Never' "${config_tail}" > cache/etc/pacman-loose.conf
+    printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" > cache/etc/pacman-strict.conf
+}
+
 assert_errexit() {
     if [[ $- != *e* ]]; then
         eval "${log_fatal}" || echo 'The script must be run with -e'
@@ -310,12 +368,23 @@ board_orangepi_5_pro() {
     _board_orangepi_5_family
 }
 
+help_board() {
+    local name prefix=board_ boards=()
+    for name in $(declare -F); do
+        if [[ "${name}" == "${prefix}"* && ${#name} -gt 6 ]]; then
+            boards+=("${name:6}")
+        fi
+    done
+    eval "${log_info}" || echo "Available boards: ${boards[@]}"
+    return
+}
+
 guard_configure='declare -n guard="configured_${FUNCNAME#configure_}" && [[ "${guard}" ]] && return || guard=1'
 
 configure_archlinuxcn() {
     eval "${guard_configure}"
-    if [[ "${mirror_local}" ]]; then
-        mirror_archlinuxcn="${mirror_local}/archlinuxcn/"'$arch'
+    if [[ "${repo_url_parent}" ]]; then
+        mirror_archlinuxcn="${repo_url_parent}/archlinuxcn/"'$arch'
     else
         mirror_archlinuxcn='https://repo.archlinuxcn.org/$arch'
     fi
@@ -340,12 +409,15 @@ distribution_archlinux() {
     distribution_safe='archlinux'
     require_architecture_target x86_64
     _distribution_common
-    local mirror_arch_suffix='$repo/os/$arch'
-    if [[ "${mirror_local}" ]]; then
-        mirror_base="${mirror_local}/archlinux/${mirror_arch_suffix}"
-    else
-        mirror_base="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
+    if [[ -z "${repo_url_archlinux}" ]]; then
+        local mirror_arch_suffix='$repo/os/$arch'
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url_archlinux="${repo_url_parent}/archlinux/${mirror_arch_suffix}"
+        else
+            repo_url_archlinux="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
+        fi
     fi
+    declare -gn repo_url_base=repo_url_archlinux
 }
 
 distribution_archlinux32() {
@@ -353,12 +425,15 @@ distribution_archlinux32() {
     distribution_safe='archlinux32'
     require_architecture_target i486 pentium4 i686
     _distribution_common
-    if [[ "${mirror_local}" ]]; then
-        mirorr_base="${mirror_local}"'/archlinux32/$arch/$repo'
-    else
-        eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
-        return 1
+    if [[ -z "${repo_url_archlinux32}" ]]; then
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url_archlinux32="${repo_url_parent}"'/archlinux32/$arch/$repo'
+        else
+            eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined through either --repo-url-archlinux32 or --repo-url-parent. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
+            return 1
+        fi
     fi
+    declare -gn repo_url_base=repo_url_archlinux32
 }
 
 distribution_archlinuxarm() {
@@ -366,12 +441,15 @@ distribution_archlinuxarm() {
     distribution_safe='archlinuxarm'
     require_architecture_target aarch64 armv7h
     _distribution_common
-    local mirror_alarm_suffix='$arch/$repo'
-    if [[ "${mirror_local}" ]]; then
-        mirror_base="${mirror_local}/archlinuxarm/${mirror_alarm_suffix}"
-    else
-        mirror_base='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
+    if [[ -z "${repo_url_archlinuxarm}" ]]; then
+        local mirror_alarm_suffix='$arch/$repo'
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url_archlinuxarm="${repo_url_parent}/archlinuxarm/${mirror_alarm_suffix}"
+        else
+            repo_url_archlinuxarm='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
+        fi
     fi
+    declare -gn repo_url_base=repo_url_archlinuxarm
 }
 
 distribution_loongarchlinux() {
@@ -379,12 +457,15 @@ distribution_loongarchlinux() {
     distribution_safe='loongarchlinux'
     require_architecture_target loong64
     _distribution_common
-    if [[ "${mirror_local}" ]]; then
-        mirorr_base="${mirror_local}"'/loongarch/archlinux/$repo/os/$arch'
-    else
-        eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
-        return 1
+    if [[ -z "${repo_url_loongarchlinux}" ]]; then
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url_loongarchlinux="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
+        else
+            eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined through either --repo-url-loongarchlinux or --repo-url-parent. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
+            return 1
+        fi
     fi
+    declare -gn repo_url_base=repo_url_loongarchlinux
 }
 
 distribution_archriscv() {
@@ -392,11 +473,24 @@ distribution_archriscv() {
     distribution_safe='archriscv'
     require_architecture_target riscv64
     _distribution_common
-    if [[ "${mirror_local}" ]]; then
-        mirror_base="${mirror_local}"'/archriscv/repo/$repo'
-    else
-        mirror_base='https://riscv.mirror.pkgbuild.com/repo/$repo'
+    if [[ -z "${repo_url_archriscv}" ]]; then
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url_archriscv="${repo_url_parent}"'/archriscv/repo/$repo'
+        else
+            repo_url_archriscv='https://riscv.mirror.pkgbuild.com/repo/$repo'
+        fi
     fi
+    declare -gn repo_url_base=repo_url_archriscv
+}
+
+help_distribution() {
+    eval "${log_info}" || echo 'Supported distribution and their supported target architectures:'
+    eval "${log_info}" || echo 'Arch Linux (archlinux, arch): x86_64'
+    eval "${log_info}" || echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
+    eval "${log_info}" || echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
+    eval "${log_info}" || echo 'Loong Arch Linux (loongarchlinux, loongarch): loongarch64(rewritten to loong64), loong64'
+    eval "${log_info}" || echo 'Arch Linux RISC-V (archriscv, archlinuxriscv): riscv64'
+    return
 }
 
 mirror_format() { #1 mirror url, #2 repo, #3 arch
@@ -409,39 +503,17 @@ mirror_format_stdout() {
     echo "${mirror_formatted}"
 }
 
-builder() {
+builder_configure() {
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
     time_start_builder=$(date +%s) || time_start_builder=''
-    case "${board}" in
-    'help')
-        local name prefix=board_ boards=()
-        for name in $(declare -F); do
-            if [[ "${name}" == "${prefix}"* && ${#name} -gt 6 ]]; then
-                boards+=("${name:6}")
-            fi
-        done
-        eval "${log_info}" || echo "Available boards: ${boards[@]}"
-        return
-        ;;
-    *)
-        local board_func="board_${board/-/_}"
-        if [[ $(type -t "${board_func}") == function ]]; then
-            "${board_func}"
-        else
-            eval "${log_error}" || echo "Board '${board}' is not supported, pass --board help to get a list of supported boards"
-            return 1
-        fi
-    esac
+    local board_func="board_${board/-/_}"
+    if [[ $(type -t "${board_func}") == function ]]; then
+        "${board_func}"
+    else
+        eval "${log_error}" || echo "Board '${board}' is not supported, pass --board help to get a list of supported boards"
+        return 1
+    fi
     case "${distribution}" in
-    'help')
-        eval "${log_info}" || echo 'Supported distribution and their supported target architectures:'
-        eval "${log_info}" || echo 'Arch Linux (archlinux, arch): x86_64'
-        eval "${log_info}" || echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
-        eval "${log_info}" || echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
-        eval "${log_info}" || echo 'Loong Arch Linux (loongarchlinux, loongarch): loongarch64(rewritten to loong64), loong64'
-        eval "${log_info}" || echo 'Arch Linux RISC-V (archlinuxriscv, archriscv): riscv64'
-        return
-        ;;
     'Arch Linux'|'archlinux'|'arch')
         distribution_archlinux
         ;;
@@ -461,33 +533,50 @@ builder() {
         eval "${log_error}" || echo "Unsupported distribution '${distribution}', use --disto help to check the list of supported distributions"
         ;;
     esac
+}
+
+builder_check() {
     check_executables
     check_date_locale
-    eval "${log_info}" || echo "Dispatch to prebuild logic. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
+    eval "${log_info}" || echo "Builder check complete. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
+}
+
+builder_work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
+    prepare_pacman_conf
+}
+
+builder() {
+    builder_configure
+    builder_check
+    builder_work
 }
 
 help_builder() {
     echo 'Usage:'
     echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
-    printf -- '--%-23s %s\n' \
+    printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
         'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
         'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, pass a special value "help" to get a list of supported boards' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
-        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman online if we already downloaded it previously' \
+        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously' \
         'help' 'print this help message' \
-        'initrd-maker' 'the initrd/initcpio/initramfs maker, pass a special value "help" to get a list of supported initrd makers, default: booster' \
-        'mirror-local [parent]' 'the parent of local mirror, or public mirror sites fast and close to the builder, setting this enables local mirror instead of global, some repos need always this to be set, currently it is not possible to do this on a per-repo basis; default: [none]; e.g.: https://mirrors.mit.edu' \
+        'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: booster (the traditional mkinitcpio would take too much time if you build cross-architecture)' \
         'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
-        'repo-core [repo]' 'the name of core repo, this is used to dump etc/pacman.conf from the pacman package; default: core'
+        'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
+        'repo-define-[name] [url]' 'define a new repo which could be referenced in later logics' \
+        'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
+        'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
+        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+        ''
 }
 
 applet_builder() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
-    repos_add=()
+    repos_base=()
     while (( $# > 0 )); do
         case "$1" in
         '--arch-host')
@@ -499,10 +588,18 @@ applet_builder() {
             shift
             ;;
         '--board')
+            if [[ "$2" == 'help' ]]; then
+                help_board
+                return
+            fi
             board="$2"
             shift
             ;;
         '--distro')
+            if [[ "$2" == 'help' ]]; then
+                help_distribution
+                return
+            fi
             distribution="$2"
             shift
             ;;
@@ -517,16 +614,20 @@ applet_builder() {
             initrd_maker="$2"
             shift
             ;;
-        '--mirror-local')
-            mirror_local="$2"
-            shift
-            ;;
-        '--repo-add')
-            repos_add+=("$2")
-            shift
-	        ;;
         '--repo-core')
             repo_core="$2"
+            shift
+            ;;
+        '--repo-url-parent')
+            repo_url_parent="$2"
+            shift
+            ;;
+        '--repo-url-*')
+            declare -g "repo_url_${1:10}=$2"
+            shift
+            ;;
+        '--repos-base')
+            IFS=', ' read -r -a repos_base <<< "$2"
             shift
             ;;
         esac
