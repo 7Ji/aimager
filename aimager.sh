@@ -557,12 +557,12 @@ builder() {
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
+    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
     printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
         'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
-        'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, this is always required, pass a special value "none" to define other options manually, pass a special value "help" to get a list of supported boards' \
+        'board [board]' 'specify a board name, which would optionally define --arch-target, --distro and other options, pass a special value "none" to define nothing, pass a special value "help" to get a list of supported boards; default: none' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
         'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously' \
         'help' 'print this help message' \
@@ -579,6 +579,7 @@ help_builder() {
 applet_builder() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
+    board=none
     repos_base=()
     while (( $# > 0 )); do
         case "$1" in
