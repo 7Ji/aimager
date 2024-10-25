@@ -333,6 +333,7 @@ no_source() {
 }
 source() { no_source; }
 .() { no_source; }
+board_none() { :; }
 
 board_x64_uefi() {
     distribution='Arch Linux'
@@ -397,7 +398,8 @@ require_architecture_target() {
             return
         fi
     done
-    eval "${log_error}" || echo "${distribution_stylised} requires target architecture to be one of $@"
+    eval "${log_error}" || echo "${distribution_stylised} requires target architecture to be one of $@, but it is ${architecture_target}"
+    return 1
 }
 
 _distribution_common() {
@@ -531,6 +533,7 @@ builder_configure() {
         ;;
     *)
         eval "${log_error}" || echo "Unsupported distribution '${distribution}', use --disto help to check the list of supported distributions"
+        return 1
         ;;
     esac
 }
@@ -554,12 +557,12 @@ builder() {
 
 help_builder() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] --distro [distro] (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
+    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) --board [board] (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
     printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
         'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
-        'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, pass a special value "help" to get a list of supported boards' \
+        'board [board]' 'specify a board name, which would optionally define --arch-target and --distro, this is always required, pass a special value "none" to define other options manually, pass a special value "help" to get a list of supported boards' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
         'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously' \
         'help' 'print this help message' \
