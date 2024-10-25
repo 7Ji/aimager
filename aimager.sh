@@ -625,8 +625,8 @@ applet_builder() {
             repo_url_parent="$2"
             shift
             ;;
-        '--repo-url-*')
-            declare -g "repo_url_${1:10}=$2"
+        '--repo-url-'*)
+            declare -g "repo_url_${1:11}=$2"
             shift
             ;;
         '--repos-base')
