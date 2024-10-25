@@ -581,6 +581,7 @@ applet_builder() {
     architecture_target=$(uname -m)
     board=none
     repos_base=()
+    local args_original="$@"
     while (( $# > 0 )); do
         case "$1" in
         '--arch-host')
@@ -633,6 +634,22 @@ applet_builder() {
         '--repos-base')
             IFS=', ' read -r -a repos_base <<< "$2"
             shift
+            ;;
+        *)
+            if ! eval "${log_error}"; then
+                echo "Unknown argument '$1':"
+                local args_original_collapsed="${args_original[*]}"
+                echo "./aimager.sh builder ${args_original_collapsed}"
+                local args_remaining_collapsed="$*"
+                printf "%$(( 21 + ${#args_original_collapsed} - ${#args_remaining_collapsed} ))s^"
+                local len="${#1}"
+                while (( $len )); do
+                    echo -n '~'
+                    let len--
+                done
+                echo
+            fi
+            return 1
             ;;
         esac
         shift
