@@ -135,7 +135,10 @@ check_executable_must_exist() {
 check_executables() {
     check_executable_must_exist curl 'download files from Internet'
     check_executable_must_exist date 'check current time'
+    check_executable_must_exist id 'to check for identity'
     check_executable_must_exist install 'install file to certain paths'
+    check_executable_must_exist newgidmap 'map group to root in child namespace'
+    check_executable_must_exist newuidmap 'map user to root in child namespace'
     check_executable_must_exist sed 'do text substitution'
     check_executable_must_exist stat 'get file modification date'
     check_executable_must_exist tar 'extract file from archives'
@@ -501,11 +504,6 @@ mirror_format() { #1 mirror url, #2 repo, #3 arch
     mirror_formatted="${mirror/\$arch/$3}"
 }
 
-mirror_format_stdout() {
-    mirror_format "$@"
-    echo "${mirror_formatted}"
-}
-
 aimager_configure() {
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
     time_start_aimager=$(date +%s) || time_start_aimager=''
@@ -557,9 +555,93 @@ binfmt_check() {
     fi
 }
 
+identity_get_name_uid_gid() {
+    identity_name=$(id --real --user --name)
+    identity_uid=$(id --real --user)
+    identity_gid=$(id --real --group)
+}
+
+identity_require_root() {
+    identity_get_name_uid_gid
+    if [[ "${identity_name}" != 'root' ]]; then
+        eval "${log_error}" || echo  "Current context require us to run as root but we are ${identity_name}"
+        return 1
+    fi
+    if [[ "${identity_uid}" != '0' ]]; then
+        eval "${log_error}" || echo  "Current context require us to run as root (UID = 0) but we have UID ${identity_uid}"
+        return 1
+    fi
+    if [[ "${identity_gid}" != '0' ]]; then
+        eval "${log_error}" || echo  "Current context require us to run as root (GID = 0) but we have GID ${identity_uid}"
+        return 1
+    fi
+}
+
+identity_require_non_root() {
+    identity_get_name_uid_gid
+    if [[ "${identity_name}" == 'root' ]]; then
+        eval "${log_error}" || echo  'Current context require us to NOT run as root but we are root'
+        return 1
+    fi
+    if [[ "${uid}" == '0' ]]; then
+        eval "${log_error}" || echo  'Current context require us to NOT run as root (UID != 0) but we have UID 0'
+        return 1
+    fi
+    if [[ "${gid}" == '0' ]]; then
+        eval "${log_error}" || echo  'Current context require us to NOT run as root (GID != 0) but we have GID 0'
+        return 1
+    fi
+}
+
+identity_require_mapped_root() {
+    identity_require_root
+    eval "${log_info}" || echo 'Trying to write content under /sys to check whether we were mapped to root or are real root'
+    if echo test > /sys/sys_write_test; then
+        eval "${log_error}" || echo 'We can write to /sys which means we have real root permission, refuse to continue as real root'
+        return 1
+    else
+        eval "${log_info}" || echo 'We are not real root and were just mapped to root in child namespace, everything looks good'
+    fi
+}
+
+identity_get_subid() { #1: type
+    declare -n identity_id="identity_$1"
+    local identity_subids=($(sed -n 's/^'"${identity_name}"':\([0-9]\+:[0-9]\+\)$/\1/p' "/etc/sub$1"))
+    if [[ "${#identity_subids[@]}" == 0 ]]; then
+        identity_get_subids=($(sed -n 's/^'"${identity_id}"':\([0-9]\+:[0-9]\+\)$/\1/p' "/etc/sub$1"))
+        if [[ "${#identity_subids[@]}" == 0 ]]; then
+            eval "${log_error}" || echo "Could not find ${1}map record for user ${identity_name} ($1 ${identity_id}) in /etc/sub$1"
+            return 1
+        fi
+    fi
+    identity_subid="${identity_subids[-1]}"
+}
+
+identity_get_subids() {
+    # We need to map the user to 0:0, and others to 1:65535
+    # The following function is currently not needed here as we're called at a very late time at which those were already gotten
+    # but keep it in case we want to swap some logic around
+    # identity_get_name_uid_gid
+    identity_get_subid uid
+    identity_subuid_range="${identity_subid#*:}"
+    if [[ "${identity_subuid_range}" -lt 65535 ]]; then
+        eval "${log_error}" || echo "Recorded subuid range in /etc/subuid too short (${identity_subuid_range} < 65535)"
+        exit 1
+    fi
+    identity_subuid_start="${identity_subid%:*}"
+    identity_get_subid gid
+    identity_subgid_range="${identity_subid#*:}"
+    if [[ "${identity_subgid_range}" -lt 65535 ]]; then
+        eval "${log_error}" || echo "Recorded subgid range in /etc/subgid too short (${identity_subgid_range} < 65535)"
+        exit 1
+    fi
+    identity_subgid_start="${identity_subid%:*}"
+}
+
 child() {
     eval "${log_info}" || echo "I am child $$, my identity is $(whoami)!"
-    sleep 3
+    sleep 2
+    identity_require_mapped_root
     eval "${log_info}" || echo "I am child $$, my identity is $(whoami)!"
 }
 
@@ -572,15 +654,17 @@ prepare_child() {
 }
 
 spawn_child_and_wait() {
+    eval "${log_info}" || echo 'Spwaning child...'
+    # if unshare --user --pid --mount --fork
     unshare --user --pid --mount --fork \
             /bin/bash -e cache/child.sh  &
     pid_child="$!"
     sleep 1
-    uid=1000
-    gid=1000
-    newuidmap "${pid_child}" 0 "${uid}" 1 1 100000 65535
-    newgidmap "${pid_child}" 0 "${gid}" 1 1 100000 65535
+    newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
+    newgidmap "${pid_child}" 0 "${identity_gid}" 1 1 "${identity_subgid_start}" "${identity_subgid_range}"
+    eval "${log_info}" || echo "Mapped UIDs and GIDs for child ${pid_child}, waiting for it to finish..."
     wait "${pid_child}"
+    eval "${log_info}" || echo "Child ${pid_child} finished successfully"
     rm -f cache/child.sh
 }
 
@@ -588,10 +672,12 @@ aimager_work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
     prepare_pacman_conf
     prepare_child
+    identity_get_subids
     spawn_child_and_wait
 }
 
 aimager() {
+    identity_require_non_root
     aimager_configure
     if  [[ "${run_binfmt_check}" ]]; then
         binfmt_check
