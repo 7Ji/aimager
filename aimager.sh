@@ -137,9 +137,11 @@ check_executables() {
     check_executable_must_exist date 'check current time'
     check_executable_must_exist id 'to check for identity'
     check_executable_must_exist install 'install file to certain paths'
+    check_executable_must_exist grep 'do text extraction'
     check_executable_must_exist newgidmap 'map group to root in child namespace'
     check_executable_must_exist newuidmap 'map user to root in child namespace'
     check_executable_must_exist sed 'do text substitution'
+    check_executable_must_exist sleep 'wait for jobs to complete'
     check_executable_must_exist stat 'get file modification date'
     check_executable_must_exist tar 'extract file from archives'
     check_executable_must_exist uname 'dump machine architecture'
@@ -638,14 +640,30 @@ identity_get_subids() {
     identity_subgid_start="${identity_subid%:*}"
 }
 
-child() {
-    eval "${log_info}" || echo "I am child $$, my identity is $(whoami)!"
-    sleep 2
-    identity_require_mapped_root
-    eval "${log_info}" || echo "I am child $$, my identity is $(whoami)!"
+child_wait() {
+    eval "${log_debug}" || echo "Child $$ started and waiting for parent to map us..."
+    local i mapped=''
+    for i in {0..10}; do
+        if identity_require_mapped_root; then
+            mapped='yes'
+            break
+        fi
+        eval "${log_info}" || echo 'Waiting for parent to map us...'
+        sleep 1
+    done
+    if [[ -z "${mapped}" ]]; then
+        eval "${log_error}" || echo 'Give up after waiting for 10 seconds yet parents fail to map us'
+        return 1
+    fi
+    eval "${log_debug}" || echo 'Child wait complete'
 }
 
-prepare_child() {
+child() {
+    child_wait
+    eval "${log_info}" || echo 'Child exiting!!'
+}
+
+prepare_child_context() {
     {
         declare -p | grep 'declare -[-fFgIpaAilnrtux]\+ [a-z_]'
         declare -f
@@ -653,27 +671,49 @@ prepare_child() {
     } >  cache/child.sh
 }
 
-spawn_child_and_wait() {
-    eval "${log_info}" || echo 'Spwaning child...'
-    # if unshare --user --pid --mount --fork
-    unshare --user --pid --mount --fork \
+run_child_and_wait() {
+    local unshare_fields=$(unshare --help | sed 's/^ \+--map-users=\(.\+\)$/\1/p' -n)
+    # Just why do they change the CLI so frequently?
+    case "${unshare_fields}" in
+    '<inneruid>:<outeruid>:<count>') # 2.40, Arch
+        local map_users="1:${identity_subuid_start}:${identity_subuid_range}"
+        local map_groups="1:${identity_subgid_start}:${identity_subgid_range}"
+        ;;
+    '<outeruid>,<inneruid>,<count>') # 2.38, Debian 12
+        local map_users="${identity_subuid_start},1,${identity_subuid_range}"
+        local map_groups="${identity_subgid_start},1,${identity_subgid_range}"
+        ;;
+    *) # <= 2.37, e.g. 2.37, Ubuntu 22.04, used on Github Actions
+        eval "${log_info}" || echo 'System unshare does not support --map-users and --map-groups, mapping by ourselvee using newuidmap and newgidmap'
+        eval "${log_info}" || echo 'Spwaning child (async)...'
+        unshare --user --pid --mount --fork \
             /bin/bash -e cache/child.sh  &
-    pid_child="$!"
-    sleep 1
-    newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
-    newgidmap "${pid_child}" 0 "${identity_gid}" 1 1 "${identity_subgid_start}" "${identity_subgid_range}"
-    eval "${log_info}" || echo "Mapped UIDs and GIDs for child ${pid_child}, waiting for it to finish..."
-    wait "${pid_child}"
-    eval "${log_info}" || echo "Child ${pid_child} finished successfully"
-    rm -f cache/child.sh
+        pid_child="$!"
+        sleep 1
+        newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
+        newgidmap "${pid_child}" 0 "${identity_gid}" 1 1 "${identity_subgid_start}" "${identity_subgid_range}"
+        eval "${log_info}" || echo "Mapped UIDs and GIDs for child ${pid_child}, waiting for it to finish..."
+        wait "${pid_child}"
+        eval "${log_info}" || echo "Child ${pid_child} finished successfully"
+        return
+        ;;
+    esac
+    eval "${log_info}" || echo 'System unshare support --map-users and --map-groups, using unshare itself to map'
+    eval "${log_info}" || echo 'Spwaning child (sync)...'
+    unshare --user --pid --mount --fork \
+        --map-root-user \
+        --map-users="${map_users}" \
+        --map-groups="${map_groups}" \
+        -- \
+        /bin/bash -e cache/child.sh
 }
 
 aimager_work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
     prepare_pacman_conf
-    prepare_child
+    prepare_child_context
     identity_get_subids
-    spawn_child_and_wait
+    run_child_and_wait
 }
 
 aimager() {
