@@ -692,6 +692,7 @@ child_clean() {
 child() {
     child_wait
     child_fs
+    pacman -Sy --config cache/etc/pacman-loose.conf --noconfirm base
     eval "${log_info}" || echo 'Child exiting!!'
 }
 
