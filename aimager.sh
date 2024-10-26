@@ -133,6 +133,7 @@ check_executable_must_exist() {
 }
 
 check_executables() {
+    check_executable_must_exist bsdtar 'pack root into archive'
     check_executable_must_exist curl 'download files from Internet'
     check_executable_must_exist date 'check current time'
     check_executable_must_exist id 'to check for identity'
@@ -538,6 +539,15 @@ aimager_configure() {
         return 1
         ;;
     esac
+    if [[ -z "${out_prefix}" ]]; then
+        out_prefix="out/${distribution_safe}-${architecture_target}-${board}-$(date +%Y%m%d%H%M%S)-"
+        eval "${log_warn}" || echo "Output prefix not set, generated as '${out_prefix}'"
+        if [[ "${out_prefix}" == */* ]]; then
+            eval "${log_info}" || echo "Output prefix contains folder, pre-creating it..."
+            mkdir -p "${out_prefix%/*}"
+        fi
+    fi
+    out_root_tar="${out_prefix}root.tar"
 }
 
 aimager_check() {
@@ -692,7 +702,15 @@ child_clean() {
 child() {
     child_wait
     child_fs
-    pacman -Sy --config cache/etc/pacman-loose.conf --noconfirm base
+    if [[ "${reuse_root_tar}" ]]; then
+        eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
+        bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C cache/root
+    else
+        pacman -Sy --config cache/etc/pacman-loose.conf --noconfirm base
+    fi
+    eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
+    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C cache/root --exclude ./dev --exclude ./proc --exclude ./sys .
+    mv "${out_root_tar}"{.temp,}
     eval "${log_info}" || echo 'Child exiting!!'
 }
 
@@ -762,7 +780,7 @@ aimager() {
 
 help_aimager() {
     echo 'Usage:'
-    echo "  $0 (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
+    echo "  $0 (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--out-prefix [prefix]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo]) (--reuse-root-tar [tar])"
     echo
     printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
@@ -773,12 +791,14 @@ help_aimager() {
         'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously' \
         'help' 'print this help message' \
         'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: booster (the traditional mkinitcpio would take too much time if you build cross-architecture)' \
+        'out-prefix [prefix]' 'the prefix of output archives and images, by default this is out/[distro]-[arch]-[board]-YYYYMMDD-' \
         'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
         'repo-define-[name] [url]' 'define a new repo which could be referenced in later logics' \
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
         'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping and package installation, only board-specific operation would be performed' \
 
 }
 
@@ -798,8 +818,10 @@ aimager_cli() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
     board=none
+    out_prefix=''
     run_binfmt_check=''
     repos_base=()
+    reuse_root_tar=''
     local args_original="$@"
     while (( $# > 0 )); do
         case "$1" in
@@ -841,6 +863,10 @@ aimager_cli() {
             initrd_maker="$2"
             shift
             ;;
+        '--out-prefix')
+            out_prefix="$2"
+            shift
+            ;;
         '--repo-core')
             repo_core="$2"
             shift
@@ -855,6 +881,10 @@ aimager_cli() {
             ;;
         '--repos-base')
             IFS=', ' read -r -a repos_base <<< "$2"
+            shift
+            ;;
+        '--reuse-root-tar')
+            reuse_root_tar="$2"
             shift
             ;;
         *)
