@@ -557,9 +557,38 @@ binfmt_check() {
     fi
 }
 
+child() {
+    eval "${log_info}" || echo "I am child $$, my identity is $(whoami)!"
+    sleep 3
+    eval "${log_info}" || echo "I am child $$, my identity is $(whoami)!"
+}
+
+prepare_child() {
+    {
+        declare -p | grep 'declare -[-fFgIpaAilnrtux]\+ [a-z_]'
+        declare -f
+        echo 'child'
+    } >  cache/child.sh
+}
+
+spawn_child_and_wait() {
+    unshare --user --pid --mount --fork \
+            /bin/bash -e cache/child.sh  &
+    pid_child="$!"
+    sleep 1
+    uid=1000
+    gid=1000
+    newuidmap "${pid_child}" 0 "${uid}" 1 1 100000 65535
+    newgidmap "${pid_child}" 0 "${gid}" 1 1 100000 65535
+    wait "${pid_child}"
+    rm -f cache/child.sh
+}
+
 builder_work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
     prepare_pacman_conf
+    prepare_child
+    spawn_child_and_wait
 }
 
 builder() {
