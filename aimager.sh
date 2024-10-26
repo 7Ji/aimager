@@ -140,6 +140,7 @@ check_executables() {
     check_executable_must_exist grep 'do text extraction'
     check_executable_must_exist newgidmap 'map group to root in child namespace'
     check_executable_must_exist newuidmap 'map user to root in child namespace'
+    check_executable_must_exist readlink 'get stdout psuedo terminal path'
     check_executable_must_exist sed 'do text substitution'
     check_executable_must_exist sleep 'wait for jobs to complete'
     check_executable_must_exist stat 'get file modification date'
@@ -658,8 +659,39 @@ child_wait() {
     eval "${log_debug}" || echo 'Child wait complete'
 }
 
+child_fs() {
+    rm -rf cache/root
+    mkdir -p cache/root/{boot,dev,etc/pacman.d,proc,run,sys,tmp,var/{cache/pacman/pkg,lib/pacman,log}}
+    mount cache/root cache/root -o bind
+    mount tmpfs-dev cache/root/dev -t tmpfs -o mode=0755,nosuid
+    mount tmpfs-sys cache/root/sys -t tmpfs -o mode=0755,nosuid
+    mkdir -p cache/root/{dev/{shm,pts},sys/module}
+    chmod 1777 cache/root/{dev/shm,tmp}
+    chmod 555 cache/root/{proc,sys}
+    mount proc cache/root/proc -t proc -o nosuid,noexec,nodev
+    mount devpts cache/root/dev/pts -t devpts -o mode=0620,gid=5,nosuid,noexec
+    local node
+    for node in full null random tty urandom zero; do
+        devnode=cache/root/dev/"${node}"
+        touch "${devnode}"
+        mount /dev/"${node}" "${devnode}" -o bind
+    done
+    ln -s /proc/self/fd/2 cache/root/dev/stderr
+    ln -s /proc/self/fd/1 cache/root/dev/stdout
+    ln -s /proc/self/fd/0 cache/root/dev/stdin
+    ln -s /proc/kcore cache/root/dev/core
+    ln -s /proc/self/fd cache/root/dev/fd
+    ln -s pts/ptmx cache/root/dev/ptmx
+    ln -s $(readlink -f /dev/stdout) cache/root/dev/console
+}
+
+child_clean() {
+    rm -rf cache/root/dev/* cache/sys/*
+}
+
 child() {
     child_wait
+    child_fs
     eval "${log_info}" || echo 'Child exiting!!'
 }
 
