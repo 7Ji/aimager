@@ -150,7 +150,7 @@ check_executables() {
 }
 
 check_date_locale() {
-    if [[ -z "${time_start_builder}" ]]; then
+    if [[ -z "${time_start_aimager}" ]]; then
         eval "${log_error}" || echo "Start time was not recorded, please check your 'date' installation"
         return 1
     fi
@@ -170,7 +170,7 @@ download() { # 1: url, 2: path, 3: mod
 }
 
 touched_after_start() { #1: path
-    [[ $(stat -c '%Y' "$1" 2>/dev/null) -ge "${time_start_builder}" ]]
+    [[ $(stat -c '%Y' "$1" 2>/dev/null) -ge "${time_start_aimager}" ]]
 }
 
 get_repo_db() { #1: repo url, 2: repo name, 3: arch
@@ -506,9 +506,9 @@ mirror_format_stdout() {
     echo "${mirror_formatted}"
 }
 
-builder_configure() {
+aimager_configure() {
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
-    time_start_builder=$(date +%s) || time_start_builder=''
+    time_start_aimager=$(date +%s) || time_start_aimager=''
     local board_func="board_${board/-/_}"
     if [[ $(type -t "${board_func}") == function ]]; then
         "${board_func}"
@@ -539,10 +539,10 @@ builder_configure() {
     esac
 }
 
-builder_check() {
+aimager_check() {
     check_executables
     check_date_locale
-    eval "${log_info}" || echo "Builder check complete. $(( $(date +%s) - ${time_start_builder} )) seconds has elasped since builder started at $(date -d @"${time_start_builder}")"
+    eval "${log_info}" || echo "Aimager check complete. $(( $(date +%s) - ${time_start_aimager} )) seconds has elasped since aimager started at $(date -d @"${time_start_aimager}")"
 }
 
 binfmt_check() {
@@ -584,26 +584,26 @@ spawn_child_and_wait() {
     rm -f cache/child.sh
 }
 
-builder_work() {
+aimager_work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
     prepare_pacman_conf
     prepare_child
     spawn_child_and_wait
 }
 
-builder() {
-    builder_configure
+aimager() {
+    aimager_configure
     if  [[ "${run_binfmt_check}" ]]; then
         binfmt_check
         return
     fi
-    builder_check
-    builder_work
+    aimager_check
+    aimager_work
 }
 
-help_builder() {
+help_aimager() {
     echo 'Usage:'
-    echo "  $0 builder (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
+    echo "  $0 (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo])"
     echo
     printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
@@ -620,7 +620,7 @@ help_builder() {
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
         'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
-        ''
+
 }
 
 report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining args
@@ -635,7 +635,7 @@ report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining arg
     echo
 }
 
-applet_builder() {
+aimager_cli() {
     architecture_host=$(uname -m)
     architecture_target=$(uname -m)
     board=none
@@ -675,7 +675,7 @@ applet_builder() {
             freeze_pacman='yes'
             ;;
         '--help')
-            help_builder
+            help_aimager
             return 0
             ;;
         '--inird-maker')
@@ -701,76 +701,16 @@ applet_builder() {
         *)
             if ! eval "${log_error}"; then
                 echo "Unknown argument '$1'"
-                report_wrong_arg './aimager builder' "${args_original[*]}" "$@"
+                report_wrong_arg './aimager.sh' "${args_original[*]}" "$@"
             fi
             return 1
             ;;
         esac
         shift
     done
-    builder
-}
-
-help_child() {
-    echo 'Usage:'
-    echo "  $0 child (--help)"
-    echo
-    echo '--help    print this help message'
-}
-
-applet_child() {
-    local args_original="$@"
-    while (( $# > 0 )); do
-        case "$1" in
-        '--help')
-            help_child
-            return 0
-            ;;
-        *)
-            if ! eval "${log_error}"; then
-                echo "Unknown argument '$1'"
-                report_wrong_arg './aimager child' "${args_original[*]}" "$@"
-            fi
-            return 1
-            ;;
-        esac
-    done
-}
-
-help_dispatch() {
-    echo 'Usage:'
-    echo "  $0 [applet]/--help"
-    echo
-    echo '[applet]  one of the following: builder, child'
-    echo '--help    print this help message; for help about applets, write --help after [applet]'
-}
-
-use_namespace() { #1: namespace
-    local name
-    local prefix="$1::"
-    local len_prefix="${#prefix}"
-    for name in $(declare -F); do
-        if [[ "${name}" == "${prefix}"* ]]; then
-            echo "Exporting ${name} to root namespace"
-            alias "${name:${len_prefix}}"="${name}"
-        fi
-    done
+    aimager
 }
 
 assert_errexit
 
-case "$1" in
-'builder')
-    applet_builder "${@:2}"
-    ;;
-'child')
-    applet_child "${@:2}"
-    ;;
-'--help')
-    help_dispatch
-    ;;
-*)
-    eval "${log_error}" || echo "Unknown applet '$1', printing help message instead"
-    help_dispatch
-    ;;
-esac
+aimager_cli "$@"
