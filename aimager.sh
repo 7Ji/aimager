@@ -227,8 +227,8 @@ update_pacman_static() {
         eval "${log_info}" || echo 'Local pacman-static was already updated during this run, no need to update'
         return
     fi
-    configure_archlinuxcn
-    get_repo_pkg_file "${mirror_archlinuxcn}" archlinuxcn "${architecture_host}" pacman-static usr/bin/pacman-static
+    repo_archlinuxcn
+    get_repo_pkg_file "${repo_url_archlinuxcn}" archlinuxcn "${architecture_host}" pacman-static usr/bin/pacman-static
     mkdir -p cache/bin
     ln -sf "../pkg/${pkg_dir_path#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
 }
@@ -391,15 +391,13 @@ help_board() {
     return
 }
 
-guard_configure='declare -n guard="configured_${FUNCNAME#configure_}" && [[ "${guard}" ]] && return || guard=1'
-
-configure_archlinuxcn() {
-    eval "${guard_configure}"
+repo_archlinuxcn() {
     if [[ "${repo_url_parent}" ]]; then
-        mirror_archlinuxcn="${repo_url_parent}/archlinuxcn/"'$arch'
+        repo_url_archlinuxcn="${repo_url_parent}/archlinuxcn/"'$arch'
     else
-        mirror_archlinuxcn='https://repo.archlinuxcn.org/$arch'
+        repo_url_archlinuxcn='https://repo.archlinuxcn.org/$arch'
     fi
+    repo_keyring_archlinuxcn='archlinuxcn'
 }
 
 require_architecture_target() {
@@ -422,15 +420,15 @@ distribution_archlinux() {
     distribution_safe='archlinux'
     require_architecture_target x86_64
     _distribution_common
-    if [[ -z "${repo_url_archlinux}" ]]; then
+    if [[ -z "${repo_url['archlinux']}" ]]; then
         local mirror_arch_suffix='$repo/os/$arch'
         if [[ "${repo_url_parent}" ]]; then
-            repo_url_archlinux="${repo_url_parent}/archlinux/${mirror_arch_suffix}"
+            repo_url['archlinux']="${repo_url_parent}/archlinux/${mirror_arch_suffix}"
         else
-            repo_url_archlinux="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
+            repo_url['archlinux']="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
         fi
     fi
-    declare -gn repo_url_base=repo_url_archlinux
+    declare -gn repo_url_base=repo_url['archlinux']
 }
 
 distribution_archlinux32() {
@@ -438,15 +436,15 @@ distribution_archlinux32() {
     distribution_safe='archlinux32'
     require_architecture_target i486 pentium4 i686
     _distribution_common
-    if [[ -z "${repo_url_archlinux32}" ]]; then
+    if [[ -z "${repo_url['archlinux32']}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url_archlinux32="${repo_url_parent}"'/archlinux32/$arch/$repo'
+            repo_url['archlinux32']="${repo_url_parent}"'/archlinux32/$arch/$repo'
         else
             eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined through either --repo-url-archlinux32 or --repo-url-parent. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
             return 1
         fi
     fi
-    declare -gn repo_url_base=repo_url_archlinux32
+    declare -gn repo_url_base=repo_url['archlinux32']
 }
 
 distribution_archlinuxarm() {
@@ -454,15 +452,15 @@ distribution_archlinuxarm() {
     distribution_safe='archlinuxarm'
     require_architecture_target aarch64 armv7h
     _distribution_common
-    if [[ -z "${repo_url_archlinuxarm}" ]]; then
+    if [[ -z "${repo_url['archlinuxarm']}" ]]; then
         local mirror_alarm_suffix='$arch/$repo'
         if [[ "${repo_url_parent}" ]]; then
-            repo_url_archlinuxarm="${repo_url_parent}/archlinuxarm/${mirror_alarm_suffix}"
+            repo_url['archlinuxarm']="${repo_url_parent}/archlinuxarm/${mirror_alarm_suffix}"
         else
-            repo_url_archlinuxarm='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
+            repo_url['archlinuxarm']='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
         fi
     fi
-    declare -gn repo_url_base=repo_url_archlinuxarm
+    declare -gn repo_url_base=repo_url['archlinuxarm']
 }
 
 distribution_loongarchlinux() {
@@ -470,15 +468,15 @@ distribution_loongarchlinux() {
     distribution_safe='loongarchlinux'
     require_architecture_target loong64
     _distribution_common
-    if [[ -z "${repo_url_loongarchlinux}" ]]; then
+    if [[ -z "${repo_url['loongarchlinux']}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url_loongarchlinux="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
+            repo_url['loongarchlinux']="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
         else
             eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined through either --repo-url-loongarchlinux or --repo-url-parent. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
             return 1
         fi
     fi
-    declare -gn repo_url_base=repo_url_loongarchlinux
+    declare -gn repo_url_base=repo_url['loongarchlinux']
 }
 
 distribution_archriscv() {
@@ -486,14 +484,14 @@ distribution_archriscv() {
     distribution_safe='archriscv'
     require_architecture_target riscv64
     _distribution_common
-    if [[ -z "${repo_url_archriscv}" ]]; then
+    if [[ -z "${repo_url['archriscv']}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url_archriscv="${repo_url_parent}"'/archriscv/repo/$repo'
+            repo_url['archriscv']="${repo_url_parent}"'/archriscv/repo/$repo'
         else
-            repo_url_archriscv='https://riscv.mirror.pkgbuild.com/repo/$repo'
+            repo_url['archriscv']='https://riscv.mirror.pkgbuild.com/repo/$repo'
         fi
     fi
-    declare -gn repo_url_base=repo_url_archriscv
+    declare -gn repo_url_base=repo_url['archriscv']
 }
 
 help_distribution() {
@@ -858,6 +856,7 @@ aimager_cli() {
     board=none
     out_prefix=''
     run_binfmt_check=''
+    declare -A repo_url
     repos_base=()
     reuse_root_tar=''
     local args_original="$@"
@@ -914,7 +913,7 @@ aimager_cli() {
             shift
             ;;
         '--repo-url-'*)
-            declare -g "repo_url_${1:11}=$2"
+            repo_url["${1:11}"]="$2"
             shift
             ;;
         '--repos-base')
