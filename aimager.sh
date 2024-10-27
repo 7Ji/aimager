@@ -235,7 +235,10 @@ update_pacman_static() {
 
 prepare_pacman_conf() {
     eval "${log_info}" || echo "Preparing pacman configs from ${distribution_stylised} repo at '${repo_url_base}'"
-    if touched_after_start cache/etc/pacman-strict.conf &&
+    if [[ "${freeze_pacman}" && cache/etc/pacman-strict.conf && -f cache/etc/pacman-loose.conf ]]; then
+        eval "${log_info}" || echo 'Local pacman configs exist and --freeze-pacman was set, using existing configs'
+        return
+    elif touched_after_start cache/etc/pacman-strict.conf &&
         touched_after_start cache/etc/pacman-loose.conf
     then
         eval "${log_info}" || echo 'Local pacman configs were already updated during this run, no need to update'
@@ -788,7 +791,7 @@ help_aimager() {
         'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
         'board [board]' 'specify a board name, which would optionally define --arch-target, --distro and other options, pass a special value "none" to define nothing, pass a special value "help" to get a list of supported boards; default: none' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
-        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously' \
+        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; for all hosts, do not re-generate cache/etc/pacman-loose.conf and cache/etc/pacman-strict.conf from repo; this is strongly NOT recommended UNLESS you are doing continuous builds are re-using the same cache' \
         'help' 'print this help message' \
         'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: booster (the traditional mkinitcpio would take too much time if you build cross-architecture)' \
         'out-prefix [prefix]' 'the prefix of output archives and images, by default this is out/[distro]-[arch]-[board]-YYYYMMDD-' \
