@@ -391,13 +391,45 @@ help_board() {
     return
 }
 
-repo_archlinuxcn() {
-    if [[ "${repo_url_parent}" ]]; then
-        repo_url_archlinuxcn="${repo_url_parent}/archlinuxcn/"'$arch'
-    else
-        repo_url_archlinuxcn='https://repo.archlinuxcn.org/$arch'
+# All third-party repo definitions, in alphabetical order
+# Unlike distributions, we do not enforce architecture detection in third-party repos, as:
+#  1. These repo might be used for host (like archlinuxcn for pacman-static), checking target architecure is no good
+#  2. It would be very easy to add a new architecture support to a thrid-party repo, unlike to a distro
+
+# https://github.com/7Ji/archrepo/
+repo_7Ji() {
+    if [[ -z "${repo_url['7Ji']}" ]]; then
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url['7Ji']="${repo_url_parent}"'/$repo/$arch'
+        else
+            repo_url['7Ji']='https://github.com/$repo/archrepo/releases/download/$arch'
+        fi
     fi
-    repo_keyring_archlinuxcn='archlinuxcn'
+    repo_keyring['7Ji']='7ji-keyring'
+}
+
+# https://arch4edu.org/
+repo_arch4edu() {
+    if [[ -z "${repo_url['arch4edu']}" ]]; then
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url['arch4edu']="${repo_url_parent}"'$repo/$arch'
+        else
+            repo_url['arch4edu']='https://repository.arch4edu.org/$arch'
+        fi
+    fi
+    repo_keyring['archlinuxcn']='arch4edu-keyring'
+}
+
+# https://www.archlinuxcn.org/archlinux-cn-repo-and-mirror/
+repo_archlinuxcn() {
+    if [[ -z "${repo_url['archlinuxcn']}" ]]; then
+        if [[ "${repo_url_parent}" ]]; then
+            repo_url['archlinuxcn']="${repo_url_parent}/archlinuxcn/"'$arch'
+        else
+            repo_url['archlinuxcn']='https://repo.archlinuxcn.org/$arch'
+        fi
+    fi
+    repo_keyring['archlinuxcn']='archlinuxcn-keyring'
 }
 
 require_architecture_target() {
