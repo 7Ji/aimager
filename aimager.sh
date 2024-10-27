@@ -776,6 +776,10 @@ child() {
     else
         pacman -Sy --config cache/etc/pacman-loose.conf --noconfirm base
     fi
+    local overlay
+    for overlay in "${overlays[@]}"; do
+        bsdtar --acls --xattrs -xpf "${overlay}" -C cache/root
+    done
     eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
     bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C cache/root --exclude ./dev --exclude ./proc --exclude ./sys .
     mv "${out_root_tar}"{.temp,}
@@ -848,7 +852,7 @@ aimager() {
 
 help_aimager() {
     echo 'Usage:'
-    echo "  $0 (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--out-prefix [prefix]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo]) (--reuse-root-tar [tar])"
+    echo "  $0 (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--out-prefix [prefix]) (--overlay [overlay]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo]) (--reuse-root-tar [tar])"
     echo
     printf -- '--%-25s %s\n' \
         'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
@@ -860,6 +864,7 @@ help_aimager() {
         'help' 'print this help message' \
         'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: mkinitcpio if building for same architecture, booster if cross-building as mkinitcpio would take too much time' \
         'out-prefix [prefix]' 'the prefix of output archives and images, by default this is out/[distro]-[arch]-[board]-YYYYMMDD-' \
+        'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
         'repo-define-[name] [url]' 'define a new repo which could be referenced in later logics' \
@@ -887,6 +892,7 @@ aimager_cli() {
     architecture_target=$(uname -m)
     board=none
     out_prefix=''
+    overlays=()
     run_binfmt_check=''
     declare -A repo_url
     repos_base=()
@@ -919,6 +925,10 @@ aimager_cli() {
                 return
             fi
             distribution="$2"
+            shift
+            ;;
+        '--overlay')
+            overlays+="$2"
             shift
             ;;
         '--freeze-pacman')
