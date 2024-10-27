@@ -511,9 +511,12 @@ mirror_format() { #1 mirror url, #2 repo, #3 arch
     mirror_formatted="${mirror/\$arch/$3}"
 }
 
-aimager_configure() {
+configure_environment() {
     export PATH="${PWD}/cache/bin:${PATH}" LANG=C
     time_start_aimager=$(date +%s) || time_start_aimager=''
+}
+
+configure_board() {
     local board_func="board_${board/-/_}"
     if [[ $(type -t "${board_func}") == function ]]; then
         "${board_func}"
@@ -521,6 +524,9 @@ aimager_configure() {
         eval "${log_error}" || echo "Board '${board}' is not supported, pass --board help to get a list of supported boards"
         return 1
     fi
+}
+
+configure_distribution() {
     case "${distribution}" in
     'Arch Linux'|'archlinux'|'arch')
         distribution_archlinux
@@ -542,6 +548,28 @@ aimager_configure() {
         return 1
         ;;
     esac
+}
+
+configure_persistent() {
+    configure_board
+    configure_distribution
+}
+
+configure_architecture() {
+    if [[ "${architecture_host}" == 'loongarch64' ]]; then
+        architecture_host='loong64'
+    fi
+    if [[ "${architecture_target}" == 'loongarch64' ]]; then
+        architecture_target='loong64'
+    fi
+    if [[ "${architecture_host}" != "${architecture_target}" ]]; then
+        architecture_cross='yes'
+    else
+        architecture_cross=''
+    fi
+}
+
+configure_out() {
     if [[ -z "${out_prefix}" ]]; then
         out_prefix="out/${distribution_safe}-${architecture_target}-${board}-$(date +%Y%m%d%H%M%S)-"
         eval "${log_warn}" || echo "Output prefix not set, generated as '${out_prefix}'"
@@ -553,7 +581,14 @@ aimager_configure() {
     out_root_tar="${out_prefix}root.tar"
 }
 
-aimager_check() {
+configure() {
+    configure_environment
+    configure_persistent
+    configure_architecture
+    configure_out
+}
+
+check() {
     check_executables
     check_date_locale
     eval "${log_info}" || echo "Aimager check complete. $(( $(date +%s) - ${time_start_aimager} )) seconds has elasped since aimager started at $(date -d @"${time_start_aimager}")"
@@ -762,7 +797,7 @@ run_child_and_wait() {
         /bin/bash -e cache/child.sh
 }
 
-aimager_work() {
+work() {
     eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
     prepare_pacman_conf
     prepare_child_context
@@ -772,13 +807,13 @@ aimager_work() {
 
 aimager() {
     identity_require_non_root
-    aimager_configure
+    configure
     if  [[ "${run_binfmt_check}" ]]; then
         binfmt_check
         return
     fi
-    aimager_check
-    aimager_work
+    check
+    work
 }
 
 help_aimager() {
@@ -791,9 +826,9 @@ help_aimager() {
         'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
         'board [board]' 'specify a board name, which would optionally define --arch-target, --distro and other options, pass a special value "none" to define nothing, pass a special value "help" to get a list of supported boards; default: none' \
         'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
-        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; for all hosts, do not re-generate cache/etc/pacman-loose.conf and cache/etc/pacman-strict.conf from repo; this is strongly NOT recommended UNLESS you are doing continuous builds are re-using the same cache' \
+        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; for all hosts, do not re-generate cache/etc/pacman-loose.conf and cache/etc/pacman-strict.conf from repo; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
         'help' 'print this help message' \
-        'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: booster (the traditional mkinitcpio would take too much time if you build cross-architecture)' \
+        'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: mkinitcpio if building for same architecture, booster if cross-building as mkinitcpio would take too much time' \
         'out-prefix [prefix]' 'the prefix of output archives and images, by default this is out/[distro]-[arch]-[board]-YYYYMMDD-' \
         'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
