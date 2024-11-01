@@ -358,6 +358,12 @@ board_x86_legacy() {
     bootloader='syslinux'
 }
 
+board_amlogic_s9xxx() {
+    distribution='Arch Linux ARM'
+    architecture_target='aarch64'
+    bootloader='u-boot'
+}
+
 _board_orangepi_5_family() {
     distribution='Arch Linux ARM'
     architecture_target='aarch64'
@@ -794,33 +800,7 @@ prepare_child_context() {
     } >  cache/child.sh
 }
 
-run_child_and_wait() {
-    local unshare_fields=$(unshare --help | sed 's/^ \+--map-users=\(.\+\)$/\1/p' -n)
-    # Just why do they change the CLI so frequently?
-    case "${unshare_fields}" in
-    '<inneruid>:<outeruid>:<count>') # 2.40, Arch
-        local map_users="1:${identity_subuid_start}:${identity_subuid_range}"
-        local map_groups="1:${identity_subgid_start}:${identity_subgid_range}"
-        ;;
-    '<outeruid>,<inneruid>,<count>') # 2.38, Debian 12
-        local map_users="${identity_subuid_start},1,${identity_subuid_range}"
-        local map_groups="${identity_subgid_start},1,${identity_subgid_range}"
-        ;;
-    *) # <= 2.37, e.g. 2.37, Ubuntu 22.04, used on Github Actions
-        eval "${log_info}" || echo 'System unshare does not support --map-users and --map-groups, mapping by ourselvee using newuidmap and newgidmap'
-        eval "${log_info}" || echo 'Spwaning child (async)...'
-        unshare --user --pid --mount --fork \
-            /bin/bash -e cache/child.sh  &
-        pid_child="$!"
-        sleep 1
-        newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
-        newgidmap "${pid_child}" 0 "${identity_gid}" 1 1 "${identity_subgid_start}" "${identity_subgid_range}"
-        eval "${log_info}" || echo "Mapped UIDs and GIDs for child ${pid_child}, waiting for it to finish..."
-        wait "${pid_child}"
-        eval "${log_info}" || echo "Child ${pid_child} finished successfully"
-        return
-        ;;
-    esac
+run_child_and_wait_sync() {
     eval "${log_info}" || echo 'System unshare support --map-users and --map-groups, using unshare itself to map'
     eval "${log_info}" || echo 'Spwaning child (sync)...'
     unshare --user --pid --mount --fork \
@@ -829,6 +809,40 @@ run_child_and_wait() {
         --map-groups="${map_groups}" \
         -- \
         /bin/bash -e cache/child.sh
+}
+
+run_child_and_wait_async() {
+    eval "${log_info}" || echo 'System unshare does not support --map-users and --map-groups, mapping manually using newuidmap and newgidmap'
+    eval "${log_info}" || echo 'Spwaning child (async)...'
+    unshare --user --pid --mount --fork \
+        /bin/bash -e cache/child.sh  &
+    pid_child="$!"
+    sleep 1
+    newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
+    newgidmap "${pid_child}" 0 "${identity_gid}" 1 1 "${identity_subgid_start}" "${identity_subgid_range}"
+    eval "${log_info}" || echo "Mapped UIDs and GIDs for child ${pid_child}, waiting for it to finish..."
+    wait "${pid_child}"
+    eval "${log_info}" || echo "Child ${pid_child} finished successfully"
+}
+
+run_child_and_wait() {
+    local unshare_fields=$(unshare --help | sed 's/^ \+--map-users=\(.\+\)$/\1/p' -n)
+    # Just why do they change the CLI so frequently?
+    case "${unshare_fields}" in
+    '<inneruid>:<outeruid>:<count>') # 2.40, Arch
+        local map_users="1:${identity_subuid_start}:${identity_subuid_range}"
+        local map_groups="1:${identity_subgid_start}:${identity_subgid_range}"
+        run_child_and_wait_sync
+        ;;
+    '<outeruid>,<inneruid>,<count>') # 2.38, Debian 12
+        local map_users="${identity_subuid_start},1,${identity_subuid_range}"
+        local map_groups="${identity_subgid_start},1,${identity_subgid_range}"
+        run_child_and_wait_sync
+        ;;
+    *) # <= 2.37, e.g. 2.37, Ubuntu 22.04, used on Github Actions
+        run_child_and_wait_async
+        ;;
+    esac
 }
 
 work() {
