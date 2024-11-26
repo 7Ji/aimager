@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 
 # aimager - rootless Arch Linux and derivations image builder
 # Copyright (C) 2024 Guoxin "7Ji" Pu <pugokushin@gmail.com>
@@ -17,98 +17,76 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
-## Part 0: coding guidelines
-### naming scheme: All native Bash variables and functions follow snake_case. All environment variables follow SCREAM_CASE. No camelCase, no PascalCase
-### variable scope: Prefer local variables. If a global vairable would be defined, comment before function body; if a outer variable would be used (and possibly re-defined locally) then comment before function body
-### variable expansion: Expand all user-defined variables and long-name Bash built-in variable like ${varname}, expand single character Bash built-in variable like $* 
-### exception handle: The builder always run with -e, so all non-zero returns should be handled, unless the script should break on purpose
-### dependency introduction: Always prefer Bash-native ways to handle things, try to introduce as few external program dependencies as possible. If there really are, prefer to use those provided in coreutils, than those other that come pre-installed on Arch / Ubuntu, than those that need to be installed manually
-### quoting: Prefer single quote. Use double quote only when: variables need to be expanded, or single quote need to be included. If possible, shorten double-quote usage by using C-style string catenation, e.g. 'Your name is '"${name}"', welcome!' => 'Your name is Example Name, welcome!'
+# code guidelines:
+# variable and function names are in the format of [a-z][a-z0-9_]*[a-z]
+# environment variables are in the format of AIMAGER_[A-Z0-9_]*[A-Z]
+# use always [[ ]] for test conditons, no [ ], no (( ))
+# subshell is not allowed
 
-
-## Part 1: data structure declaration
-
-# structure: repo config
-## raw: raw repo config
-### name: raw_repo_config(_[name]) raw_repo_configs
-### format: [name];[line];[line]
-### example: raw_repo_config_7Ji='7Ji;SigLevel=Never;Server=https://github.com/7Ji/archrepo/releases/download/$arch'
-
-## expanded: expaned repo config
-### name: expaned_repo_condfig(_[name]) expanded_repo_config
-### format:
-
-## name: repo_config
-
-
-## Part 2: function declaration
-### Function rules:
-### - snake_case_only, and as declarative as possible
-### - no 'function ' prefix for declaration
-### - only declare local variables, if outer logic needs to pre-declare variables, comment about it
-
-# Logging statements, currently always printing to stderr
-## $1: level
-## $2: func name
-## $3: line no
-## $4...: formatted content
-# log() {
-#     printf -- '[%s] %s@%s: %s\n' "$1" "$2" "$3" "${*:4}"
-# }
-
-# pre-defined various logging statements
-## Callers shall log like this: eval "${log_info}" || echo 'Log content'
-## When a logging level is enabled the above is effectively echo -n  '[INFO] function_name@line_no: ' && false ||  echo 'Log content'
-## When a logging level is disabled the above is effectively true ||  echo 'Log content' so echo would be skipped
-## For more info, read https://7ji.github.io/scripting/2024/09/29/bash-logging-with-funcname-lineno.html
-log_common_start='echo -n "['
-log_common_end='] ${FUNCNAME}@${LINENO}: " && false'
-log_info="${log_common_start}INFO${log_common_end}"
-log_warn="${log_common_start}WARN${log_common_end}"
-log_error="${log_common_start}ERROR${log_common_end}"
-log_fatal="${log_common_start}FATAL${log_common_end}"
-
-# Debugging-only definitions
-if [[ "${AIMAGER_DEBUG}" ]]; then
-log_debug="${log_common_start}DEBUG${log_common_end}"
-
-# Assert variables are defined and non-empty
-## $1: caller (for logging)
-## $2...: vairable names
-assert_declared() {
-    eval "${log_debug}" || echo "Asserting variables for $1: ${*:2}"
-    local _bad= _var=
-    while (( $# > 1 )); do
-        if [[ ! -v $2 ]]; then
-            eval "${log_fatal}" || echo "Variable \"$2\" is not declared"
-            _bad='y'
-            shift
-            continue
-        fi
-        declare -n _var="$2"
-        if [[ -z "${_var}" ]]; then
-            eval "${log_fatal}" || echo "Variable \"$2\" is empty"
-            _bad='y'
-        fi
-        shift
-    done
-    if [[ "${_bad}" ]]; then
-        eval "${log_fatal}" || echo 'Declaration assertion failed'
-        exit 1
-    fi
+# init shell options, and log macros
+aimager_init() { 
+    # e: error and exit on non-zero return
+    # u: error if a varaible is not defined (unbound)
+    # pipefail: error if not a whole pipe is successful
+    set -euo pipefail
+    # log macros expansion
+    local log_common_start='echo -n "['
+    local log_common_end='] ${FUNCNAME}@${LINENO}: " && false'
+    log_debug="${log_common_start}DEBUG${log_common_end}"
+    log_info="${log_common_start}INFO${log_common_end}"
+    log_warn="${log_common_start}WARN${log_common_end}"
+    log_error="${log_common_start}ERROR${log_common_end}"
+    log_fatal="${log_common_start}FATAL${log_common_end}"
+    local log_level="${AIMAGER_LOG_LEVEL:-info}"
+    case "${log_level,,}" in
+    'info')
+        log_debug='true'
+        ;;
+    'warn')
+        log_debug='true'
+        log_info='true'
+        ;;
+    'error')
+        log_debug='true'
+        log_info='true'
+        log_warn='true'
+        ;;
+    'fatal')
+        log_debug='true'
+        log_info='true'
+        log_warn='true'
+        log_error='true'
+        ;;
+    esac
+    # variables
+    ## architecture
+    arch_host=$(uname -m)
+    arch_target="${arch_host}"
+    ## built-in config options
+    board='none'
+    distro=''
+    ## caller-defined config options
+    build_id=''
+    overlays=()
+    initrd_maker=''
+    repo_core=''
+    repos_base=()
+    ## repo definition option
+    repo_url_parent=''
+    declare -gA repo_urls
+    reuse_root_tar=''
+    ## run-time behaviour
+    freeze_pacman_config=0
+    freeze_pacman_static=0
+    tmpfs_root=0
+    ## run target options
+    run_binfmt_check=''
 }
-assert_declared_this_func='assert_declared "${FUNCNAME}@${LINENO}" '
-else # Empty function bodies and short paths when debugging is not enabled,
-log_debug='true'
-assert_declared() { :; }
-assert_declared_this_func="false"
-fi
 
 # check if an executable exists
 ## $1: executable name
 ## $2: hint
 ## $3: missing callback
-
 check_executable() {
     eval "${log_debug}" || echo "Checking executable $1"
     local type_executable
@@ -129,7 +107,16 @@ check_executable() {
 
 # check_executable with pre-defined 'false' callback (break if non-existing)
 check_executable_must_exist() {
-    check_executable "$1" "$2" 'false'
+    eval "${log_debug}" || echo "Checking executable $1 (must exist)"
+    local type_executable
+    if ! type_executable=$(type -t "$1"); then
+        eval "${log_error}" || echo "Could not find needed executable \"$1\". It's needed to $2."
+        return 1
+    fi
+    if [[ "${type_executable}" != 'file' ]]; then
+        eval "${log_error}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2."
+        return 1
+    fi
 }
 
 check_executables() {
@@ -149,7 +136,7 @@ check_executables() {
     check_executable_must_exist uname 'dump machine architecture'
     check_executable_must_exist unshare 'unshare child process to do rootless stuffs'
     check_executable pacman 'install packages' update_pacman_static
-    if [[ -f cache/bin/pacman && -z "${freeze_pacman}" ]] ; then
+    if [[ -f cache/bin/pacman && -z "${freeze_pacman:-}" ]] ; then
         update_pacman_static
     fi
     eval "${log_info}" || echo "Say hello to our hero Pacman O<. ."
@@ -228,13 +215,13 @@ update_pacman_static() {
         return
     fi
     repo_archlinuxcn
-    get_repo_pkg_file "${repo_url_archlinuxcn}" archlinuxcn "${architecture_host}" pacman-static usr/bin/pacman-static
+    get_repo_pkg_file "${repo_url_archlinuxcn}" archlinuxcn "${arch_host}" pacman-static usr/bin/pacman-static
     mkdir -p cache/bin
     ln -sf "../pkg/${pkg_dir_path#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
 }
 
 prepare_pacman_conf() {
-    eval "${log_info}" || echo "Preparing pacman configs from ${distribution_stylised} repo at '${repo_url_base}'"
+    eval "${log_info}" || echo "Preparing pacman configs from ${distro_stylised} repo at '${repo_url_base}'"
     if [[ "${freeze_pacman}" && cache/etc/pacman-strict.conf && -f cache/etc/pacman-loose.conf ]]; then
         eval "${log_info}" || echo 'Local pacman configs exist and --freeze-pacman was set, using existing configs'
         return
@@ -244,7 +231,7 @@ prepare_pacman_conf() {
         eval "${log_info}" || echo 'Local pacman configs were already updated during this run, no need to update'
         return
     fi
-    get_repo_pkg_file "${repo_url_base}" "${repo_core}" "${architecture_target}" pacman etc/pacman.conf
+    get_repo_pkg_file "${repo_url_base}" "${repo_core}" "${arch_target}" pacman etc/pacman.conf
     mkdir -p cache/etc
 
     local repo_base has_core=
@@ -277,29 +264,22 @@ prepare_pacman_conf() {
         eval "${log_error}" || echo "Core repo '${repo_core}' was not found in base repos: ${repos_base[@]}"
         return 1
     fi
-    eval "${log_info}" || echo "Distribution ${distribution_stylised} has the following base repos: ${repos_base[@]}"
+    eval "${log_info}" || echo "Distribution ${distro_stylised} has the following base repos: ${repos_base[@]}"
     local config_head=$(
         echo '[options]'
         printf '%-13s= %s\n' \
-            'RootDir' 'cache/root' \
-            'DBPath' 'cache/root/var/lib/pacman/' \
-            'CacheDir' 'cache/pkg/'"${distribution_safe}:${architecture_target}" \
-            'LogFile' 'cache/root/var/log/pacman.log' \
-            'GPGDir' 'cache/root/etc/pacman.d/gnupg' \
-            'HookDir' 'cache/root/etc/pacman.d/hooks' \
-            'Architecture' "${architecture_target}"
+            'RootDir' "${path_root}" \
+            'DBPath' "${path_root}/var/lib/pacman/" \
+            'CacheDir' 'cache/pkg/'"${distro_safe}:${arch_target}" \
+            'LogFile' "${path_root}/var/log/pacman.log" \
+            'GPGDir' "${path_root}/etc/pacman.d/gnupg" \
+            'HookDir' "${path_root}/etc/pacman.d/hooks" \
+            'Architecture' "${arch_target}"
     )
     local config_tail=$(printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}")
     printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'Never' "${config_tail}" > cache/etc/pacman-loose.conf
     printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" > cache/etc/pacman-strict.conf
     eval "${log_info}" || echo "Generated loose config at 'cache/etc/pacman-loose.conf' and strict config at 'cache/etc/pacman-strict.conf'"
-}
-
-assert_errexit() {
-    if [[ $- != *e* ]]; then
-        eval "${log_fatal}" || echo 'The script must be run with -e'
-        exit 1
-    fi
 }
 
 get_architecture() { #1
@@ -347,26 +327,26 @@ source() { no_source; }
 board_none() { :; }
 
 board_x64_uefi() {
-    distribution='Arch Linux'
-    architecture_target='x86_64'
+    distro='Arch Linux'
+    arch_target='x86_64'
     bootloader='systemd-boot'
 }
 
 board_x86_legacy() {
-    distribution='Arch Linux 32'
-    architecture_target='i686'
+    distro='Arch Linux 32'
+    arch_target='i686'
     bootloader='syslinux'
 }
 
 board_amlogic_s9xxx() {
-    distribution='Arch Linux ARM'
-    architecture_target='aarch64'
+    distro='Arch Linux ARM'
+    arch_target='aarch64'
     bootloader='u-boot'
 }
 
 _board_orangepi_5_family() {
-    distribution='Arch Linux ARM'
-    architecture_target='aarch64'
+    distro='Arch Linux ARM'
+    arch_target='aarch64'
     bootloader='u-boot'
 }
 
@@ -398,7 +378,7 @@ help_board() {
 }
 
 # All third-party repo definitions, in alphabetical order
-# Unlike distributions, we do not enforce architecture detection in third-party repos, as:
+# Unlike distros, we do not enforce architecture detection in third-party repos, as:
 #  1. These repo might be used for host (like archlinuxcn for pacman-static), checking target architecure is no good
 #  2. It would be very easy to add a new architecture support to a thrid-party repo, unlike to a distro
 
@@ -438,26 +418,26 @@ repo_archlinuxcn() {
     repo_keyring['archlinuxcn']='archlinuxcn-keyring'
 }
 
-require_architecture_target() {
+require_arch_target() {
     local architecture
     for architecture in "$@"; do
-        if [[ "${architecture_target}" == "${architecture}" ]]; then
+        if [[ "${arch_target}" == "${architecture}" ]]; then
             return
         fi
     done
-    eval "${log_error}" || echo "${distribution_stylised} requires target architecture to be one of $@, but it is ${architecture_target}"
+    eval "${log_error}" || echo "${distro_stylised} requires target architecture to be one of $@, but it is ${arch_target}"
     return 1
 }
 
-_distribution_common() {
+_distro_common() {
     repo_core="${repo_core:-core}"
 }
 
-distribution_archlinux() {
-    distribution_stylised='Arch Linux'
-    distribution_safe='archlinux'
-    require_architecture_target x86_64
-    _distribution_common
+distro_archlinux() {
+    distro_stylised='Arch Linux'
+    distro_safe='archlinux'
+    require_arch_target x86_64
+    _distro_common
     if [[ -z "${repo_url['archlinux']}" ]]; then
         local mirror_arch_suffix='$repo/os/$arch'
         if [[ "${repo_url_parent}" ]]; then
@@ -469,11 +449,11 @@ distribution_archlinux() {
     declare -gn repo_url_base=repo_url['archlinux']
 }
 
-distribution_archlinux32() {
-    distribution_stylised='Arch Linux 32'
-    distribution_safe='archlinux32'
-    require_architecture_target i486 pentium4 i686
-    _distribution_common
+distro_archlinux32() {
+    distro_stylised='Arch Linux 32'
+    distro_safe='archlinux32'
+    require_arch_target i486 pentium4 i686
+    _distro_common
     if [[ -z "${repo_url['archlinux32']}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_url['archlinux32']="${repo_url_parent}"'/archlinux32/$arch/$repo'
@@ -485,11 +465,11 @@ distribution_archlinux32() {
     declare -gn repo_url_base=repo_url['archlinux32']
 }
 
-distribution_archlinuxarm() {
-    distribution_stylised='Arch Linux ARM'
-    distribution_safe='archlinuxarm'
-    require_architecture_target aarch64 armv7h
-    _distribution_common
+distro_archlinuxarm() {
+    distro_stylised='Arch Linux ARM'
+    distro_safe='archlinuxarm'
+    require_arch_target aarch64 armv7h
+    _distro_common
     if [[ -z "${repo_url['archlinuxarm']}" ]]; then
         local mirror_alarm_suffix='$arch/$repo'
         if [[ "${repo_url_parent}" ]]; then
@@ -501,11 +481,11 @@ distribution_archlinuxarm() {
     declare -gn repo_url_base=repo_url['archlinuxarm']
 }
 
-distribution_loongarchlinux() {
-    distribution_stylised='Loong Arch Linux'
-    distribution_safe='loongarchlinux'
-    require_architecture_target loong64
-    _distribution_common
+distro_loongarchlinux() {
+    distro_stylised='Loong Arch Linux'
+    distro_safe='loongarchlinux'
+    require_arch_target loong64
+    _distro_common
     if [[ -z "${repo_url['loongarchlinux']}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_url['loongarchlinux']="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
@@ -517,11 +497,11 @@ distribution_loongarchlinux() {
     declare -gn repo_url_base=repo_url['loongarchlinux']
 }
 
-distribution_archriscv() {
-    distribution_stylised='Arch Linux RISC-V'
-    distribution_safe='archriscv'
-    require_architecture_target riscv64
-    _distribution_common
+distro_archriscv() {
+    distro_stylised='Arch Linux RISC-V'
+    distro_safe='archriscv'
+    require_arch_target riscv64
+    _distro_common
     if [[ -z "${repo_url['archriscv']}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_url['archriscv']="${repo_url_parent}"'/archriscv/repo/$repo'
@@ -532,8 +512,8 @@ distribution_archriscv() {
     declare -gn repo_url_base=repo_url['archriscv']
 }
 
-help_distribution() {
-    eval "${log_info}" || echo 'Supported distribution and their supported target architectures:'
+help_distro() {
+    eval "${log_info}" || echo 'Supported distro and their supported target architectures:'
     eval "${log_info}" || echo 'Arch Linux (archlinux, arch): x86_64'
     eval "${log_info}" || echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
     eval "${log_info}" || echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
@@ -562,25 +542,25 @@ configure_board() {
     fi
 }
 
-configure_distribution() {
-    case "${distribution}" in
+configure_distro() {
+    case "${distro}" in
     'Arch Linux'|'archlinux'|'arch')
-        distribution_archlinux
+        distro_archlinux
         ;;
     'Arch Linux 32'|'archlinux32'|'arch32')
-        distribution_archlinux32
+        distro_archlinux32
         ;;
     'Arch Linux ARM'|'archlinuxarm'|'archarm'|'alarm')
-        distribution_archlinuxarm
+        distro_archlinuxarm
         ;;
     'Loong Arch Linux'|'loongarchlinux'|'loongarch')
-        distribution_loongarchlinux
+        distro_loongarchlinux
         ;;
     'Arch Linux RISC-V'|'archlinuxriscv'|'archriscv')
-        distribution_archriscv
+        distro_archriscv
         ;;
     *)
-        eval "${log_error}" || echo "Unsupported distribution '${distribution}', use --disto help to check the list of supported distributions"
+        eval "${log_error}" || echo "Unsupported distro '${distro}', use --disto help to check the list of supported distros"
         return 1
         ;;
     esac
@@ -588,26 +568,33 @@ configure_distribution() {
 
 configure_persistent() {
     configure_board
-    configure_distribution
+    configure_distro
 }
 
 configure_architecture() {
-    if [[ "${architecture_host}" == 'loongarch64' ]]; then
-        architecture_host='loong64'
+    if [[ "${arch_host}" == 'loongarch64' ]]; then
+        arch_host='loong64'
     fi
-    if [[ "${architecture_target}" == 'loongarch64' ]]; then
-        architecture_target='loong64'
+    if [[ "${arch_target}" == 'loongarch64' ]]; then
+        arch_target='loong64'
     fi
-    if [[ "${architecture_host}" != "${architecture_target}" ]]; then
+    if [[ "${arch_host}" != "${arch_target}" ]]; then
         architecture_cross='yes'
     else
         architecture_cross=''
     fi
 }
 
+configure_build_id() {
+    if [[ -z "${build_id}" ]]; then
+        build_id="${distro_safe}-${arch_target}-${board}"
+    fi
+    eval "${log_info}" || echo "Build ID is '${build_id}'"
+}
+
 configure_out() {
     if [[ -z "${out_prefix}" ]]; then
-        out_prefix="out/${distribution_safe}-${architecture_target}-${board}-$(date +%Y%m%d%H%M%S)-"
+        out_prefix="out/${distro_safe}-${arch_target}-${board}-$(date +%Y%m%d%H%M%S)-"
         eval "${log_warn}" || echo "Output prefix not set, generated as '${out_prefix}'"
         if [[ "${out_prefix}" == */* ]]; then
             eval "${log_info}" || echo "Output prefix contains folder, pre-creating it..."
@@ -617,11 +604,16 @@ configure_out() {
     out_root_tar="${out_prefix}root.tar"
 }
 
+configure_dynamic() {
+    configure_architecture
+    configure_build_id
+    configure_out
+}
+
 configure() {
     configure_environment
     configure_persistent
-    configure_architecture
-    configure_out
+    configure_dynamic
 }
 
 check() {
@@ -631,13 +623,13 @@ check() {
 }
 
 binfmt_check() {
-    if [[ "${architecture_target}" == loong64 ]]; then
-        local architecture_target=loongarch64
+    if [[ "${arch_target}" == loong64 ]]; then
+        local arch_target=loongarch64
     fi
-    if [[ "${architecture_host}" != "${architecture_target}" ]]; then
-        eval "${log_warn}" || echo "Host architecture ${architecture_host} != target architecture ${architecture_target}, checking if we have binfmt ready"
-        eval "${log_info}" || echo "Running the following test command: 'sh -c \"cd test/binfmt; ./test.sh ${architecture_target}\"'"
-        sh -c 'cd test/binfmt; ./test.sh '"${architecture_target}"
+    if [[ "${arch_host}" != "${arch_target}" ]]; then
+        eval "${log_warn}" || echo "Host architecture ${arch_host} != target architecture ${arch_target}, checking if we have binfmt ready"
+        eval "${log_info}" || echo "Running the following test command: 'sh -c \"cd test/binfmt; ./test.sh ${arch_target}\"'"
+        sh -c 'cd test/binfmt; ./test.sh '"${arch_target}"
         pwd
     fi
 }
@@ -744,33 +736,33 @@ child_wait() {
 }
 
 child_fs() {
-    rm -rf cache/root
-    mkdir -p cache/root/{boot,dev,etc/pacman.d,proc,run,sys,tmp,var/{cache/pacman/pkg,lib/pacman,log}}
-    mount cache/root cache/root -o bind
-    mount tmpfs-dev cache/root/dev -t tmpfs -o mode=0755,nosuid
-    mount tmpfs-sys cache/root/sys -t tmpfs -o mode=0755,nosuid
-    mkdir -p cache/root/{dev/{shm,pts},sys/module}
-    chmod 1777 cache/root/{dev/shm,tmp}
-    chmod 555 cache/root/{proc,sys}
-    mount proc cache/root/proc -t proc -o nosuid,noexec,nodev
-    mount devpts cache/root/dev/pts -t devpts -o mode=0620,gid=5,nosuid,noexec
+    rm -rf "${path_root}"
+    mkdir -p "${path_root}"/{boot,dev,etc/pacman.d,proc,run,sys,tmp,var/{cache/pacman/pkg,lib/pacman,log}}
+    mount "${path_root}" "${path_root}" -o bind
+    mount tmpfs-dev "${path_root}"/dev -t tmpfs -o mode=0755,nosuid
+    mount tmpfs-sys "${path_root}"/sys -t tmpfs -o mode=0755,nosuid
+    mkdir -p "${path_root}"/{dev/{shm,pts},sys/module}
+    chmod 1777 "${path_root}"/{dev/shm,tmp}
+    chmod 555 "${path_root}"/{proc,sys}
+    mount proc "${path_root}"/proc -t proc -o nosuid,noexec,nodev
+    mount devpts "${path_root}"/dev/pts -t devpts -o mode=0620,gid=5,nosuid,noexec
     local node
     for node in full null random tty urandom zero; do
-        devnode=cache/root/dev/"${node}"
+        devnode="${path_root}"/dev/"${node}"
         touch "${devnode}"
         mount /dev/"${node}" "${devnode}" -o bind
     done
-    ln -s /proc/self/fd/2 cache/root/dev/stderr
-    ln -s /proc/self/fd/1 cache/root/dev/stdout
-    ln -s /proc/self/fd/0 cache/root/dev/stdin
-    ln -s /proc/kcore cache/root/dev/core
-    ln -s /proc/self/fd cache/root/dev/fd
-    ln -s pts/ptmx cache/root/dev/ptmx
-    ln -s $(readlink -f /dev/stdout) cache/root/dev/console
+    ln -s /proc/self/fd/2 "${path_root}"/dev/stderr
+    ln -s /proc/self/fd/1 "${path_root}"/dev/stdout
+    ln -s /proc/self/fd/0 "${path_root}"/dev/stdin
+    ln -s /proc/kcore "${path_root}"/dev/core
+    ln -s /proc/self/fd "${path_root}"/dev/fd
+    ln -s pts/ptmx "${path_root}"/dev/ptmx
+    ln -s $(readlink -f /dev/stdout) "${path_root}"/dev/console
 }
 
 child_clean() {
-    rm -rf cache/root/dev/* cache/sys/*
+    rm -rf "${path_root}"/dev/* cache/sys/*
 }
 
 child() {
@@ -778,22 +770,23 @@ child() {
     child_fs
     if [[ "${reuse_root_tar}" ]]; then
         eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
-        bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C cache/root
+        bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C "${path_root}"
     else
         pacman -Sy --config cache/etc/pacman-loose.conf --noconfirm base
     fi
     local overlay
     for overlay in "${overlays[@]}"; do
-        bsdtar --acls --xattrs -xpf "${overlay}" -C cache/root
+        bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
     done
     eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
-    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C cache/root --exclude ./dev --exclude ./proc --exclude ./sys .
+    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" --exclude ./dev --exclude ./proc --exclude ./sys .
     mv "${out_root_tar}"{.temp,}
     eval "${log_info}" || echo 'Child exiting!!'
 }
 
 prepare_child_context() {
     {
+        echo 'set -euo pipefail'
         declare -p | grep 'declare -[-fFgIpaAilnrtux]\+ [a-z_]'
         declare -f
         echo 'child'
@@ -808,14 +801,14 @@ run_child_and_wait_sync() {
         --map-users="${map_users}" \
         --map-groups="${map_groups}" \
         -- \
-        /bin/bash -e cache/child.sh
+        /bin/bash cache/child.sh
 }
 
 run_child_and_wait_async() {
     eval "${log_info}" || echo 'System unshare does not support --map-users and --map-groups, mapping manually using newuidmap and newgidmap'
     eval "${log_info}" || echo 'Spwaning child (async)...'
     unshare --user --pid --mount --fork \
-        /bin/bash -e cache/child.sh  &
+        /bin/bash cache/child.sh  &
     pid_child="$!"
     sleep 1
     newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
@@ -846,7 +839,7 @@ run_child_and_wait() {
 }
 
 work() {
-    eval "${log_info}" || echo "Building for distribution '${distribution}' to architecture '${architecture_target}' from architecture '${architecture_host}'"
+    eval "${log_info}" || echo "Building for distro '${distro}' to architecture '${arch_target}' from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
     identity_get_subids
@@ -866,26 +859,46 @@ aimager() {
 
 help_aimager() {
     echo 'Usage:'
-    echo "  $0 (--arch-host [arch]) (--arch-target [arch]) (--binfmt-check) (--board [board]) (--distro [distro]) (--freeze-pacman) (--mirror-local [parent]) (--help) (--initrd-maker [maker]) (--out-prefix [prefix]) (--overlay [overlay]) (--pkg [pkg]) (--repo-add [repo]) (--repo-core [repo]) (--reuse-root-tar [tar])"
-    echo
-    printf -- '--%-25s %s\n' \
-        'arch-host [arch]' 'overwrite the auto-detected host architecture; default: result of "uname -m"' \
-        'arch-target [arch]' 'specify the target architecure; default: result of "uname -m"' \
-        'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
-        'board [board]' 'specify a board name, which would optionally define --arch-target, --distro and other options, pass a special value "none" to define nothing, pass a special value "help" to get a list of supported boards; default: none' \
-        'distro [distro]' 'specify the target distribution, pass a special value "help" to get a list of supported distributions' \
-        'freeze-pacman' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; for all hosts, do not re-generate cache/etc/pacman-loose.conf and cache/etc/pacman-strict.conf from repo; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
-        'help' 'print this help message' \
-        'initrd-maker' 'the initrd/initcpio/initramfs maker; supported: mkinitcpio, booster; default: mkinitcpio if building for same architecture, booster if cross-building as mkinitcpio would take too much time' \
-        'out-prefix [prefix]' 'the prefix of output archives and images, by default this is out/[distro]-[arch]-[board]-YYYYMMDD-' \
+    echo "  $0 ([--option] ([option argument])) ..."
+    echo 'Currently under development, help message is hidden as it does not reflect the actual code'
+    return
+    local formatter='    --%-25s %s\n'
+
+    printf '\nArchitecture options:\n'
+    printf -- "${formatter}" \
+        'arch-host [arch]' 'host architecture; default: result of `uname -m`' \
+        'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
+
+    printf '\nBuilt-in config options:\n' 
+    printf -- "${formatter}" \
+        'board [board]' 'board, setting "help" would print a list of supported boards; default: none' \
+        'distro [distro]*' 'distro, required, setting "help" would print a list of supported distros' \
+    
+    printf '\Image config options:\n'
+    printf -- "${formatter}" \
+        'build-id [build id]' 'a unique build id; default: [distro safe name]-[target architecture]-[board]-[yyyymmddhhmmss]' \
+        'initrd-maker [maker]' 'initrd/initcpio/initramfs maker: mkinitcpio/booster' \
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
+        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+
+    printf '\Repo-definition options:\n'
+    printf -- "${formatter}" \
         'repo-define-[name] [url]' 'define a new repo which could be referenced in later logics' \
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
-        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+
+    printf '\nBuilder behaviour options:\n'
+    printf -- "${formatter}" \
+        'freeze-pacman-config' 'do not re-generate cache/etc/pacman-loose.conf and cache/etc/pacman-strict.conf from repo' \
+        'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
         'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping and package installation, only board-specific operation would be performed' \
+    
+    printf '\nRun-target options:\n'
+    printf -- "${formatter}" \
+        'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
+        'help' 'print this help message' \
 
 }
 
@@ -902,26 +915,21 @@ report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining arg
 }
 
 aimager_cli() {
-    architecture_host=$(uname -m)
-    architecture_target=$(uname -m)
-    board=none
-    out_prefix=''
-    overlays=()
-    run_binfmt_check=''
-    declare -A repo_url
-    repos_base=()
-    reuse_root_tar=''
+    # declare -A config_dynamic
+    # declare
     local args_original="$@"
     while (( $# > 0 )); do
         case "$1" in
+        # Architecture options
         '--arch-host')
-            architecture_host="$2"
+            arch_host="$2"
             shift
             ;;
         '--arch-target')
-            architecture_target="$2"
+            arch_target="$2"
             shift
             ;;
+        # Built-in config options
         '--board')
             if [[ "$2" == 'help' ]]; then
                 help_board
@@ -930,40 +938,36 @@ aimager_cli() {
             board="$2"
             shift
             ;;
-        '--binfmt-check')
-            run_binfmt_check='yes'
-            ;;
         '--distro')
             if [[ "$2" == 'help' ]]; then
-                help_distribution
+                help_distro
                 return
             fi
-            distribution="$2"
+            distro="$2"
+            shift
+            ;;
+        # Image config options
+        '--build-id')
+            build_id="$2"
             shift
             ;;
         '--overlay')
-            overlays+="$2"
+            overlays+=("$2")
             shift
-            ;;
-        '--freeze-pacman')
-            freeze_pacman='yes'
-            ;;
-        '--help')
-            help_aimager
-            return 0
             ;;
         '--inird-maker')
             initrd_maker="$2"
-            shift
-            ;;
-        '--out-prefix')
-            out_prefix="$2"
             shift
             ;;
         '--repo-core')
             repo_core="$2"
             shift
             ;;
+        '--repos-base')
+            IFS=', ' read -r -a repos_base <<< "$2"
+            shift
+            ;;
+        # Repo-definition options
         '--repo-url-parent')
             repo_url_parent="$2"
             shift
@@ -972,13 +976,25 @@ aimager_cli() {
             repo_url["${1:11}"]="$2"
             shift
             ;;
-        '--repos-base')
-            IFS=', ' read -r -a repos_base <<< "$2"
-            shift
+        # Run-time behaviour options
+        '--freeze-pacman')
+            freeze_pacman='yes'
             ;;
         '--reuse-root-tar')
             reuse_root_tar="$2"
             shift
+            ;;
+        '--tmpfs-root')
+            tmpfs_root=1
+            shift
+            ;;
+        # Run-target options
+        '--binfmt-check')
+            run_binfmt_check='yes'
+            ;;
+        '--help')
+            help_aimager
+            return 0
             ;;
         *)
             if ! eval "${log_error}"; then
@@ -993,6 +1009,5 @@ aimager_cli() {
     aimager
 }
 
-assert_errexit
-
+aimager_init
 aimager_cli "$@"
