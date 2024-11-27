@@ -20,8 +20,9 @@
 # code guidelines:
 # variable and function names are in the format of [a-z][a-z0-9_]*[a-z]
 # environment variables are in the format of AIMAGER_[A-Z0-9_]*[A-Z]
-# use always [[ ]] for test conditons, no [ ], no (( ))
-# subshell is not allowed
+# use either [[ ]] or (( )) for test conditons, prefer (( )) over [[ ]] for math
+# indent is 4 spaces
+# wrap lines at 80 columns, unless the line ends with a long url
 
 # init shell options, and log macros
 aimager_init() { 
@@ -67,18 +68,21 @@ aimager_init() {
     distro=''
     ## caller-defined config options
     build_id=''
-    overlays=()
     initrd_maker=''
+    out_prefix=''
+    overlays=()
     repo_core=''
     repos_base=()
     ## repo definition option
     repo_url_parent=''
     declare -gA repo_urls
+    declare -gA repo_keyrings
     reuse_root_tar=''
     ## run-time behaviour
     freeze_pacman_config=0
     freeze_pacman_static=0
-    tmpfs_root=0
+    tmpfs_root=''
+    use_pacman_static=0
     ## run target options
     run_binfmt_check=''
 }
@@ -91,16 +95,22 @@ check_executable() {
     eval "${log_debug}" || echo "Checking executable $1"
     local type_executable
     if ! type_executable=$(type -t "$1"); then
-        eval "${log_error}" || echo "Could not find needed executable \"$1\". It's needed to $2."
+        eval "${log_error}" || echo \
+            "Could not find needed executable \"$1\"."\
+            "It's needed to $2."
         "$3"
         if ! type_executable=$(type -t "$1"); then
-            eval "${log_error}" || echo "Still could not find needed executable \"$1\" after callback \"$3\". It's needed to $2."
+            eval "${log_error}" || echo \
+                "Still could not find needed executable \"$1\" after"\
+                "callback \"$3\". It's needed to $2."
             return 1
         fi
-        # explicit fallthrough: unless callback is false, we would check whether the executable becomes available after callback
     fi
     if [[ "${type_executable}" != 'file' ]]; then
-        eval "${log_error}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2."
+        eval "${log_error}" || echo \
+            "Needed executable \"${name_executable}\" exists in Bash context"\
+            "but it is a \"${type_executable}\" instead of a file."\
+            "It's needed to $2."
         return 1
     fi
 }
@@ -110,16 +120,24 @@ check_executable_must_exist() {
     eval "${log_debug}" || echo "Checking executable $1 (must exist)"
     local type_executable
     if ! type_executable=$(type -t "$1"); then
-        eval "${log_error}" || echo "Could not find needed executable \"$1\". It's needed to $2."
+        eval "${log_error}" || echo \
+            "Could not find needed executable \"$1\"."\
+            "It's needed to $2."\
+            "Refuse to continue."
         return 1
     fi
     if [[ "${type_executable}" != 'file' ]]; then
-        eval "${log_error}" || echo "Needed executable \"${name_executable}\" exists in Bash context but it is a \"${type_executable}\" instead of a file. It's needed to $2."
+        eval "${log_error}" || echo \
+            "Needed executable \"${name_executable}\" exists in Bash context"\
+            "but it is a \"${type_executable}\" instead of a file."\
+            "It's needed to $2."\
+            "Refuse to continue"
         return 1
     fi
 }
 
 check_executables() {
+    # check_executable_must_exist awk 'advanced text substution'
     check_executable_must_exist bsdtar 'pack root into archive'
     check_executable_must_exist curl 'download files from Internet'
     check_executable_must_exist date 'check current time'
@@ -134,8 +152,12 @@ check_executables() {
     check_executable_must_exist stat 'get file modification date'
     check_executable_must_exist tar 'extract file from archives'
     check_executable_must_exist uname 'dump machine architecture'
-    check_executable_must_exist unshare 'unshare child process to do rootless stuffs'
-    check_executable pacman 'install packages' update_pacman_static
+    check_executable_must_exist unshare 'unshare child process'
+    if (( "${use_pacman_static}" )); then
+        update_pacman_static
+    else
+        check_executable pacman 'install packages' update_pacman_static
+    fi
     if [[ -f cache/bin/pacman && -z "${freeze_pacman:-}" ]] ; then
         update_pacman_static
     fi
@@ -145,101 +167,184 @@ check_executables() {
 
 check_date_locale() {
     if [[ -z "${time_start_aimager}" ]]; then
-        eval "${log_error}" || echo "Start time was not recorded, please check your 'date' installation"
+        eval "${log_error}" || echo \
+            "Start time was not recorded, please check your 'date' installation"
         return 1
     fi
-    if [[ "${LANG}$(LANG=C date -ud @0)" != 'CThu Jan  1 00:00:00 UTC 1970' ]]; then
-        eval "${log_error}" || echo "Current locale was not in C or not correctly in C. The following is a date example and it's not in strict C manner: $(date)"
+    local actual_output="${LANG}$(LANG=C date -ud @0)"
+    local expected_output='CThu Jan  1 00:00:00 UTC 1970'
+    if [[ "${actual_output}" != "${expected_output}" ]]; then
+        eval "${log_error}" || echo \
+            "Current locale was not in C or not correctly in C."\
+            "Was expecting output of date command to be \"${expected_output}\""\
+            "But it is actually \"${actual_output}\""
         return 1
     fi
 }
 
+# download a url to a path, with specific permission mod. this would always
+# delete the target file (and possibly its corresponding .temp cache file, if 
+# that exists).
 download() { # 1: url, 2: path, 3: mod
     rm -f "$2"{,.temp}
     echo -n | install -Dm"${3:-644}" /dev/stdin "$2".temp
     eval "${log_info}" || echo "Downloading '$2' < '$1'"
-    curl -qgb "" -fL --retry 3 --retry-delay 3 -o "$2".temp "$1" || return 1
+    curl -qgb "" -fL --retry 3 --retry-delay 3 -o "$2".temp "$1"
     eval "${log_info}" || echo "Downloaded '$2' <= '$1'"
     mv "$2"{.temp,}
 }
 
+# check if the fs entry pointed by a path ($1) was touched after aimager was 
+# started, or more specifically, after configure->configure_environment was 
+# called and ${time_start_aimager} was set.
+# this is mostly useful to avoid updating a stuff multiple times during the same
+# run of aimager.
 touched_after_start() { #1: path
-    [[ $(stat -c '%Y' "$1" 2>/dev/null) -ge "${time_start_aimager}" ]]
+    local time_touched
+    time_touched=$(stat -c '%Y' "$1" 2>/dev/null) || time_touched=0
+    (( "${time_touched}" >= "${time_start_aimager}" ))
 }
 
-get_repo_db() { #1: repo url, 2: repo name, 3: arch
+# cache a repo's db lazily, if it was already cached during this run then it
+# would not be re-cached
+# SET: db_path
+# SET: mirror_formatted @mirror_format
+cache_repo_db() { #1: repo url, 2: repo name, 3: arch
     mirror_format "$1" "$2" "$3"
     db_path="cache/repo/$2:$3.db"
-    touched_after_start "${db_path}" && return
+    if touched_after_start "${db_path}"; then
+        return
+    fi
     download "${mirror_formatted}/$2.db" "${db_path}"
 }
 
-get_repo_pkg() { #1: repo url, 2: repo name, 3: arch, 4: package
-    get_repo_db "$1" "$2" "$3"
-    pkg_ver=
-    local pkg_file_remote=
-    local line= pkg_name=
-    for line in $(tar -xOf "${db_path}" --wildcards "$4"'-*/desc' | sed -n '/%FILENAME/{n;p;};/%NAME%/{n;p;};/%VERSION%/{n;p;}'); do
-        [[ -z "${pkg_file_remote}" ]] && pkg_file_remote="${line}" && continue
-        [[ -z "${pkg_name}" ]] && pkg_name="${line}" && continue
-        pkg_ver="${line}"
-        [[ "${pkg_name}" == "$4" ]] && break
-        pkg_file_remote=
-        pkg_name=
-    done
-    if [[ "${pkg_name}" != "$4" ]] || [[ -z "${pkg_file_remote}" ]] || [[ -z "${pkg_ver}" ]]; then
-        eval "${log_error}" || echo "Failed to get package '$4' of arch '$3' from repo '$2' at '$1'"
+# cache a pkg from a repo lazily, if it already exists locally then it would not
+# be re-cached (note this is different from db)
+# SET: db_path @cache_repo_db
+# SET: mirror_formatted @cache_repo_db
+# SET: pkg_filename
+# SET: pkg_path
+# SET: pkg_ver
+cache_repo_pkg() { #1: repo url, 2: repo name, 3: arch, 4: package
+    cache_repo_db "$1" "$2" "$3"
+    local cache_names_versions=$(
+        tar -xOf "${db_path}" --wildcards "$4"'-*/desc' |
+        sed -n '/%FILENAME/{n;p;};/%NAME%/{n;p;};/%VERSION%/{n;p;}'
+    )
+    local filenames=($(sed -n 'p;n;n' <<< "${cache_names_versions}"))
+    local names=($(sed -n 'n;p;n' <<< "${cache_names_versions}"))
+    local versions=($(sed -n 'n;n;p' <<< "${cache_names_versions}"))
+    if (( ${#filenames[@]} == ${#names[@]} )) && 
+        (( ${#names[@]} == ${#versions[@]} )); then
+        :
+    else
+        eval "${log_error}" || echo \
+            "Dumped filenames (${#filenames[@]}), names (${#names[@]}) and"\
+            "versions (${#versions[@]}) length not equal to each other"
+        eval "${log_debug}" || echo \
+            "Dumped filesnames: ${filesnames[*]};"\
+            "Dumped names: ${names[*]};"\
+            "Dumped versions: ${versions[*]}"
         return 1
     fi
-    eval "${log_info}" || echo "Latest '$4' of arch '$3' from repo '$2' at '$1' is at version '${pkg_ver}'"
-    pkg_file_local="$2:$3:${pkg_file_remote}"
-    pkg_path=cache/pkg/"${pkg_file_local}"
+    pkg_ver=
+    local filename= name=
+    local i=0
+    for name in "${names[@]}"; do
+        if [[ "${name}" == "$4" ]]; then
+            filename="${filenames[$i]}"
+            pkg_ver="${versions[$i]}"
+            break
+        fi
+        i=$(( $i + 1 ))
+    done
+    if [[ "${name}" == "$4" ]] && 
+        [[ "${filename}" ]] && 
+        [[ "${pkg_ver}" ]]
+    then
+        :
+    else
+        eval "${log_error}" || echo \
+            "Failed to get package '$4' of arch '$3' from repo '$2' at '$1'"
+        return 1
+    fi
+    eval "${log_info}" || echo \
+        "Latest '$4' of arch '$3' from repo '$2' at '$1'"\
+        "is at version '${pkg_ver}'"
+    pkg_filename="$2:$3:${filename}"
+    pkg_path=cache/pkg/"${pkg_filename}"
     if [[ -f "${pkg_path}" ]]; then
-        eval "${log_info}" || echo "Skipped downloading as '${pkg_path}' already exists locally"
+        eval "${log_info}" || echo \
+            "Skipped downloading as '${pkg_path}' already exists locally"
         return
     fi
-    download "${mirror_formatted}/${pkg_file_remote}" "${pkg_path}"
+    download "${mirror_formatted}/${filename}" "${pkg_path}"
 }
 
-get_repo_pkg_file() { #1: repo url, 2: repo name, 3: arch, 4: package, 5: file path
-    get_repo_pkg "$1" "$2" "$3" "$4"
-    pkg_dir_path="${pkg_path%.pkg.tar*}"
-    mkdir -p "${pkg_dir_path}"
-    tar -C "${pkg_dir_path}" -xf "cache/pkg/${pkg_file_local}" "$5"
+# cache a file from a pkg from a remote, this always re-extract the file even if
+# it already exists locally
+# SET: db_path @cache_repo_pkg
+# SET: mirror_formatted @cache_repo_pkg
+# SET: pkg_dir
+# SET: pkg_filename @cache_repo_pkg
+# SET: pkg_path @cache_repo_pkg
+# SET: pkg_ver @cache_repo_pkg
+# 1: repo url, 2: repo name, 3: arch, 4: package, 5: path in pkg
+cache_repo_pkg_file() { 
+    cache_repo_pkg "$1" "$2" "$3" "$4"
+    pkg_dir="${pkg_path%.pkg.tar*}"
+    mkdir -p "${pkg_dir}"
+    tar -C "${pkg_dir}" -xf "cache/pkg/${pkg_filename}" "$5"
 }
 
 update_pacman_static() {
-    eval "${log_info}" || echo 'Trying to update pacman-static from archlinuxcn repo'
+    eval "${log_info}" || echo \
+        'Trying to update pacman-static from archlinuxcn repo'
     if touched_after_start cache/bin/pacman; then
-        eval "${log_info}" || echo 'Local pacman-static was already updated during this run, no need to update'
+        eval "${log_info}" || echo \
+            'Local pacman-static was already updated during this run,'\
+            'no need to update'
         return
     fi
     repo_archlinuxcn
-    get_repo_pkg_file "${repo_url_archlinuxcn}" archlinuxcn "${arch_host}" pacman-static usr/bin/pacman-static
+    cache_repo_pkg_file "${repo_urls['archlinuxcn']}" archlinuxcn \
+        "${arch_host}" pacman-static usr/bin/pacman-static
     mkdir -p cache/bin
-    ln -sf "../pkg/${pkg_dir_path#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
+    ln -sf "../pkg/${pkg_dir#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
 }
 
 prepare_pacman_conf() {
-    eval "${log_info}" || echo "Preparing pacman configs from ${distro_stylised} repo at '${repo_url_base}'"
-    if [[ "${freeze_pacman}" && cache/etc/pacman-strict.conf && -f cache/etc/pacman-loose.conf ]]; then
-        eval "${log_info}" || echo 'Local pacman configs exist and --freeze-pacman was set, using existing configs'
+    eval "${log_info}" || echo \
+        "Preparing pacman configs from ${distro_stylised} repo"\
+        "at '${repo_url_base}'"
+    if (( "${freeze_pacman_config}" )) && [[ 
+        -f cache/etc/pacman-strict.conf && 
+        -f cache/etc/pacman-loose.conf ]]
+    then
+        eval "${log_info}" || echo \
+            'Local pacman configs exist and --freeze-pacman was set'\
+            'using existing configs'
         return
     elif touched_after_start cache/etc/pacman-strict.conf &&
         touched_after_start cache/etc/pacman-loose.conf
     then
-        eval "${log_info}" || echo 'Local pacman configs were already updated during this run, no need to update'
+        eval "${log_info}" || echo \
+            'Local pacman configs were already updated during this run,'\
+            'no need to update'
         return
     fi
-    get_repo_pkg_file "${repo_url_base}" "${repo_core}" "${arch_target}" pacman etc/pacman.conf
+    cache_repo_pkg_file "${repo_url_base}" "${repo_core}" \
+        "${arch_target}" pacman etc/pacman.conf
     mkdir -p cache/etc
 
     local repo_base has_core=
-    if (( "${#repos_base}" )); then
+    if (( "${#repos_base[@]}" )); then
         for repo_base in "${repos_base[@]}"; do
             case "${repo_base}" in
             options)
-                eval "${log_error}" || echo "User-defined base repo contains 'options' which is not allowed: ${repos_base[@]}"
+                eval "${log_error}" || echo \
+                    "User-defined base repo contains 'options' which is not"\
+                    "allowed: ${repos_base[*]}"
                 return 1
                 ;;
             "${repo_core}")
@@ -248,7 +353,9 @@ prepare_pacman_conf() {
             esac
         done
     else
-        for repo_base in $(sed -n 's/^\[\(.\+\)\]$/\1/p' < "${pkg_dir_path}/etc/pacman.conf"); do
+        for repo_base in $(
+            sed -n 's/^\[\(.\+\)\]$/\1/p' < "${pkg_dir}/etc/pacman.conf"
+        ); do
             case "${repo_base}" in
             options)
                 continue
@@ -261,10 +368,14 @@ prepare_pacman_conf() {
         done
     fi
     if [[ -z "${has_core}" ]]; then
-        eval "${log_error}" || echo "Core repo '${repo_core}' was not found in base repos: ${repos_base[@]}"
+        eval "${log_error}" || echo \
+            "Core repo '${repo_core}' was not found in base repos:"\
+            "${repos_base[*]}"
         return 1
     fi
-    eval "${log_info}" || echo "Distribution ${distro_stylised} has the following base repos: ${repos_base[@]}"
+    eval "${log_info}" || echo \
+        "Distribution ${distro_stylised} has the following base repos:"\
+        "${repos_base[*]}"
     local config_head=$(
         echo '[options]'
         printf '%-13s= %s\n' \
@@ -276,50 +387,64 @@ prepare_pacman_conf() {
             'HookDir' "${path_root}/etc/pacman.d/hooks" \
             'Architecture' "${arch_target}"
     )
-    local config_tail=$(printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}")
-    printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'Never' "${config_tail}" > cache/etc/pacman-loose.conf
-    printf '%s\n%-13s= %s\n%s' "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" > cache/etc/pacman-strict.conf
-    eval "${log_info}" || echo "Generated loose config at 'cache/etc/pacman-loose.conf' and strict config at 'cache/etc/pacman-strict.conf'"
+    local config_tail=$(
+        printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}"
+    )
+    printf '%s\n%-13s= %s\n%s' \
+        "${config_head}" 'SigLevel' 'Never' "${config_tail}" \
+        > cache/etc/pacman-loose.conf
+    printf '%s\n%-13s= %s\n%s' \
+        "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" \
+        > cache/etc/pacman-strict.conf
+    eval "${log_info}" || echo \
+        "Generated loose config at 'cache/etc/pacman-loose.conf' and "\
+        "strict config at 'cache/etc/pacman-strict.conf'"
 }
 
-get_architecture() { #1
-    case "${architecture}" in
-        auto|host|'')
-            architecture=$(uname -m)
-            local allowed_architecture
-            for allowed_architecture in "${allowed_architectures[@]}"; do
-                [[ "${allowed_architecture}" == "${architecture}" ]] && return 0
-            done
-            eval "${log_error}" || echo "Auto-detected architecture '${architecture}' is not allowed for distro '${distro}'. Allowed: ${allowed_architectures[*]}"
-            return 1
-            ;;
-        *)
-            architecture="${allowed_architectures[0]}"
-            ;;
-    esac
-}
+# get_architecture() { #1
+#     case "${architecture}" in
+#         auto|host|'')
+#             architecture=$(uname -m)
+#             local allowed_architecture
+#             for allowed_architecture in "${allowed_architectures[@]}"; do
+#                 [[ "${allowed_architecture}" == "${architecture}" ]] && return 0
+#             done
+#             eval "${log_error}" || echo \
+#                 "Auto-detected architecture '${architecture}' is not allowed "\
+#                 "for distro '${distro}'."\
+#                 "Allowed: ${allowed_architectures[*]}"
+#             return 1
+#             ;;
+#         *)
+#             architecture="${allowed_architectures[0]}"
+#             ;;
+#     esac
+# }
 
-get_distro() {
-    distro=$(source /etc/os-release; echo $NAME)
-    local allowed_architectures=()
-    case "${distro}" in
-        'Arch Linux')
-            allowed_architectures=(x86_64)
-            ;;
-        'Arch Linux ARM')
-            allowed_architectures=(aarch64 armv7h)
-            ;;
-        'Loong Arch Linux')
-            allowed_architectures=(loong64)
-            ;;
-        *)
-            eval "${log_warn}" || echo "Unknown distro from /etc/os-release: ${distro}"
-            ;;
-    esac
-}
+# get_distro() {
+#     distro=$(source /etc/os-release; echo $NAME)
+#     local allowed_architectures=()
+#     case "${distro}" in
+#         'Arch Linux')
+#             allowed_architectures=(x86_64)
+#             ;;
+#         'Arch Linux ARM')
+#             allowed_architectures=(aarch64 armv7h)
+#             ;;
+#         'Loong Arch Linux')
+#             allowed_architectures=(loong64)
+#             ;;
+#         *)
+#             eval "${log_warn}" || echo \
+#                 "Unknown distro from /etc/os-release: ${distro}"
+#             ;;
+#     esac
+# }
 
 no_source() {
-    eval "${log_fatal}" || echo "Both 'source' and '.' are banned from aimager, aimager is strictly single-file only"
+    eval "${log_fatal}" || echo \
+        "Both 'source' and '.' are banned from aimager,"\
+        "aimager is strictly single-file only"
     return 1
 }
 source() { no_source; }
@@ -378,44 +503,47 @@ help_board() {
 }
 
 # All third-party repo definitions, in alphabetical order
-# Unlike distros, we do not enforce architecture detection in third-party repos, as:
-#  1. These repo might be used for host (like archlinuxcn for pacman-static), checking target architecure is no good
-#  2. It would be very easy to add a new architecture support to a thrid-party repo, unlike to a distro
+# Unlike distros, we do not enforce architecture detection in third-party repos,
+# as:
+#  1. These repo might be used for host (like archlinuxcn for pacman-static), 
+# checking target architecure is no good
+#  2. It would be very easy to add a new architecture support to a thrid-party 
+# repo, unlike to a distro
 
 # https://github.com/7Ji/archrepo/
 repo_7Ji() {
-    if [[ -z "${repo_url['7Ji']}" ]]; then
+    if [[ -z "${repo_urls['7Ji']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['7Ji']="${repo_url_parent}"'/$repo/$arch'
+            repo_urls['7Ji']="${repo_url_parent}"'/$repo/$arch'
         else
-            repo_url['7Ji']='https://github.com/$repo/archrepo/releases/download/$arch'
+            repo_urls['7Ji']='https://github.com/$repo/archrepo/releases/download/$arch'
         fi
     fi
-    repo_keyring['7Ji']='7ji-keyring'
+    repo_keyrings['7Ji']='7ji-keyring'
 }
 
 # https://arch4edu.org/
 repo_arch4edu() {
-    if [[ -z "${repo_url['arch4edu']}" ]]; then
+    if [[ -z "${repo_urls['arch4edu']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['arch4edu']="${repo_url_parent}"'$repo/$arch'
+            repo_urls['arch4edu']="${repo_url_parent}"'$repo/$arch'
         else
-            repo_url['arch4edu']='https://repository.arch4edu.org/$arch'
+            repo_urls['arch4edu']='https://repository.arch4edu.org/$arch'
         fi
     fi
-    repo_keyring['archlinuxcn']='arch4edu-keyring'
+    repo_keyrings['archlinuxcn']='arch4edu-keyring'
 }
 
 # https://www.archlinuxcn.org/archlinux-cn-repo-and-mirror/
 repo_archlinuxcn() {
-    if [[ -z "${repo_url['archlinuxcn']}" ]]; then
+    if [[ -z "${repo_urls['archlinuxcn']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['archlinuxcn']="${repo_url_parent}/archlinuxcn/"'$arch'
+            repo_urls['archlinuxcn']="${repo_url_parent}/archlinuxcn/"'$arch'
         else
-            repo_url['archlinuxcn']='https://repo.archlinuxcn.org/$arch'
+            repo_urls['archlinuxcn']='https://repo.archlinuxcn.org/$arch'
         fi
     fi
-    repo_keyring['archlinuxcn']='archlinuxcn-keyring'
+    repo_keyrings['archlinuxcn']='archlinuxcn-keyring'
 }
 
 require_arch_target() {
@@ -425,7 +553,9 @@ require_arch_target() {
             return
         fi
     done
-    eval "${log_error}" || echo "${distro_stylised} requires target architecture to be one of $@, but it is ${arch_target}"
+    eval "${log_error}" || echo \
+        "${distro_stylised} requires target architecture to be one of $*,"\
+        "but it is ${arch_target}"
     return 1
 }
 
@@ -438,15 +568,15 @@ distro_archlinux() {
     distro_safe='archlinux'
     require_arch_target x86_64
     _distro_common
-    if [[ -z "${repo_url['archlinux']}" ]]; then
+    if [[ -z "${repo_urls['archlinux']:-}" ]]; then
         local mirror_arch_suffix='$repo/os/$arch'
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['archlinux']="${repo_url_parent}/archlinux/${mirror_arch_suffix}"
+            repo_urls['archlinux']="${repo_url_parent}/archlinux/${mirror_arch_suffix}"
         else
-            repo_url['archlinux']="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
+            repo_urls['archlinux']="https://geo.mirror.pkgbuild.com/${mirror_arch_suffix}"
         fi
     fi
-    declare -gn repo_url_base=repo_url['archlinux']
+    declare -gn repo_url_base=repo_urls['archlinux']
 }
 
 distro_archlinux32() {
@@ -454,15 +584,20 @@ distro_archlinux32() {
     distro_safe='archlinux32'
     require_arch_target i486 pentium4 i686
     _distro_common
-    if [[ -z "${repo_url['archlinux32']}" ]]; then
+    if [[ -z "${repo_urls['archlinux32']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['archlinux32']="${repo_url_parent}"'/archlinux32/$arch/$repo'
+            repo_urls['archlinux32']="${repo_url_parent}"'/archlinux32/$arch/$repo'
         else
-            eval "${log_error}" || echo 'Arch Linux 32 does not have a globally GeoIP-based mirror and a local mirror must be defined through either --repo-url-archlinux32 or --repo-url-parent. Please choose one from https://www.archlinux32.org/download or use your own local mirror.'
+            eval "${log_error}" || echo \
+                'Arch Linux 32 does not have a globally GeoIP-based mirror and'\
+                'a local mirror must be defined through either'\
+                '--repo-url-archlinux32 or --repo-url-parent.'\
+                'Please choose one from https://www.archlinux32.org/download'\
+                'or use your own local mirror.'
             return 1
         fi
     fi
-    declare -gn repo_url_base=repo_url['archlinux32']
+    declare -gn repo_url_base=repo_urls['archlinux32']
 }
 
 distro_archlinuxarm() {
@@ -470,15 +605,15 @@ distro_archlinuxarm() {
     distro_safe='archlinuxarm'
     require_arch_target aarch64 armv7h
     _distro_common
-    if [[ -z "${repo_url['archlinuxarm']}" ]]; then
+    if [[ -z "${repo_urls['archlinuxarm']:-}" ]]; then
         local mirror_alarm_suffix='$arch/$repo'
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['archlinuxarm']="${repo_url_parent}/archlinuxarm/${mirror_alarm_suffix}"
+            repo_urls['archlinuxarm']="${repo_url_parent}/archlinuxarm/${mirror_alarm_suffix}"
         else
-            repo_url['archlinuxarm']='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
+            repo_urls['archlinuxarm']='http://mirror.archlinuxarm.org/'"${mirror_alarm_suffix}"
         fi
     fi
-    declare -gn repo_url_base=repo_url['archlinuxarm']
+    declare -gn repo_url_base=repo_urls['archlinuxarm']
 }
 
 distro_loongarchlinux() {
@@ -486,15 +621,21 @@ distro_loongarchlinux() {
     distro_safe='loongarchlinux'
     require_arch_target loong64
     _distro_common
-    if [[ -z "${repo_url['loongarchlinux']}" ]]; then
+    if [[ -z "${repo_urls['loongarchlinux']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['loongarchlinux']="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
+            repo_urls['loongarchlinux']="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
         else
-            eval "${log_error}" || echo 'Loong Arch Linux does not have a globally GeoIP-based mirror and a local mirror must be defined through either --repo-url-loongarchlinux or --repo-url-parent. Please choose one from https://loongarchlinux.org/pages/download or use your own local mirror.'
+            eval "${log_error}" || echo \
+                'Loong Arch Linux does not have a globally GeoIP-based mirror'\
+                'and a local mirror must be defined through either'\
+                '--repo-url-loongarchlinux or --repo-url-parent.'\
+                'Please choose one from'\
+                'https://loongarchlinux.org/pages/download'\
+                'or use your own local mirror.'
             return 1
         fi
     fi
-    declare -gn repo_url_base=repo_url['loongarchlinux']
+    declare -gn repo_url_base=repo_urls['loongarchlinux']
 }
 
 distro_archriscv() {
@@ -502,26 +643,29 @@ distro_archriscv() {
     distro_safe='archriscv'
     require_arch_target riscv64
     _distro_common
-    if [[ -z "${repo_url['archriscv']}" ]]; then
+    if [[ -z "${repo_urls['archriscv']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_url['archriscv']="${repo_url_parent}"'/archriscv/repo/$repo'
+            repo_urls['archriscv']="${repo_url_parent}"'/archriscv/repo/$repo'
         else
-            repo_url['archriscv']='https://riscv.mirror.pkgbuild.com/repo/$repo'
+            repo_urls['archriscv']='https://riscv.mirror.pkgbuild.com/repo/$repo'
         fi
     fi
-    declare -gn repo_url_base=repo_url['archriscv']
+    declare -gn repo_url_base=repo_urls['archriscv']
 }
 
 help_distro() {
-    eval "${log_info}" || echo 'Supported distro and their supported target architectures:'
-    eval "${log_info}" || echo 'Arch Linux (archlinux, arch): x86_64'
-    eval "${log_info}" || echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
-    eval "${log_info}" || echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
-    eval "${log_info}" || echo 'Loong Arch Linux (loongarchlinux, loongarch): loongarch64(rewritten to loong64), loong64'
-    eval "${log_info}" || echo 'Arch Linux RISC-V (archriscv, archlinuxriscv): riscv64'
-    return
+    if ! eval "${log_info}"; then
+        echo 'Supported distro and their supported target architectures:'
+        echo 'Arch Linux (archlinux, arch): x86_64'
+        echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
+        echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
+        echo 'Loong Arch Linux (loongarchlinux, loongarch): '\
+            'loongarch64(rewritten to loong64), loong64'
+        echo 'Arch Linux RISC-V (archriscv, archlinuxriscv): riscv64'
+    fi
 }
 
+# SET: mirror_formatted
 mirror_format() { #1 mirror url, #2 repo, #3 arch
     local mirror="${1/\$repo/$2}"
     mirror_formatted="${mirror/\$arch/$3}"
@@ -537,7 +681,9 @@ configure_board() {
     if [[ $(type -t "${board_func}") == function ]]; then
         "${board_func}"
     else
-        eval "${log_error}" || echo "Board '${board}' is not supported, pass --board help to get a list of supported boards"
+        eval "${log_error}" || echo \
+            "Board '${board}' is not supported, pass --board help to get"\
+            "a list of supported boards"
         return 1
     fi
 }
@@ -560,7 +706,9 @@ configure_distro() {
         distro_archriscv
         ;;
     *)
-        eval "${log_error}" || echo "Unsupported distro '${distro}', use --disto help to check the list of supported distros"
+        eval "${log_error}" || echo \
+            "Unsupported distro '${distro}', use --disto help to check"\
+            "the list of supported distros"
         return 1
         ;;
     esac
@@ -585,19 +733,23 @@ configure_architecture() {
     fi
 }
 
-configure_build_id() {
+configure_build() {
     if [[ -z "${build_id}" ]]; then
-        build_id="${distro_safe}-${arch_target}-${board}"
+        build_id="${distro_safe}-${arch_target}-${board}-$(date +%Y%m%d%H%M%S)"
     fi
     eval "${log_info}" || echo "Build ID is '${build_id}'"
+    path_root=cache/root."${build_id}"
+    eval "${log_info}" || echo "Root mountpoint is '${path_root}'"
 }
 
 configure_out() {
     if [[ -z "${out_prefix}" ]]; then
-        out_prefix="out/${distro_safe}-${arch_target}-${board}-$(date +%Y%m%d%H%M%S)-"
-        eval "${log_warn}" || echo "Output prefix not set, generated as '${out_prefix}'"
+        out_prefix="out/${build_id}-"
+        eval "${log_warn}" || echo \
+            "Output prefix not set, generated as '${out_prefix}'"
         if [[ "${out_prefix}" == */* ]]; then
-            eval "${log_info}" || echo "Output prefix contains folder, pre-creating it..."
+            eval "${log_info}" || echo \
+                "Output prefix contains folder, pre-creating it..."
             mkdir -p "${out_prefix%/*}"
         fi
     fi
@@ -606,7 +758,7 @@ configure_out() {
 
 configure_dynamic() {
     configure_architecture
-    configure_build_id
+    configure_build
     configure_out
 }
 
@@ -619,7 +771,10 @@ configure() {
 check() {
     check_executables
     check_date_locale
-    eval "${log_info}" || echo "Aimager check complete. $(( $(date +%s) - ${time_start_aimager} )) seconds has elasped since aimager started at $(date -d @"${time_start_aimager}")"
+    eval "${log_info}" || echo \
+        "Aimager check complete."\
+        "$(( $(date +%s) - ${time_start_aimager} )) seconds has elasped since"\
+        "aimager started at $(date -d @"${time_start_aimager}")"
 }
 
 binfmt_check() {
@@ -627,8 +782,13 @@ binfmt_check() {
         local arch_target=loongarch64
     fi
     if [[ "${arch_host}" != "${arch_target}" ]]; then
-        eval "${log_warn}" || echo "Host architecture ${arch_host} != target architecture ${arch_target}, checking if we have binfmt ready"
-        eval "${log_info}" || echo "Running the following test command: 'sh -c \"cd test/binfmt; ./test.sh ${arch_target}\"'"
+        eval "${log_warn}" || echo \
+            "Host architecture ${arch_host} !="\
+            "target architecture ${arch_target},"\
+            "checking if we have binfmt ready"
+        eval "${log_info}" || echo \
+            "Running the following test command: "\
+            "'sh -c \"cd test/binfmt; ./test.sh ${arch_target}\"'"
         sh -c 'cd test/binfmt; ./test.sh '"${arch_target}"
         pwd
     fi
@@ -643,15 +803,21 @@ identity_get_name_uid_gid() {
 identity_require_root() {
     identity_get_name_uid_gid
     if [[ "${identity_name}" != 'root' ]]; then
-        eval "${log_error}" || echo  "Current context require us to run as root but we are ${identity_name}"
+        eval "${log_error}" || echo \
+            "Current context require us to run as root"\
+            "but we are ${identity_name}"
         return 1
     fi
     if [[ "${identity_uid}" != '0' ]]; then
-        eval "${log_error}" || echo  "Current context require us to run as root (UID = 0) but we have UID ${identity_uid}"
+        eval "${log_error}" || echo \
+            "Current context require us to run as root (UID = 0)"\
+            "but we have UID ${identity_uid}"
         return 1
     fi
     if [[ "${identity_gid}" != '0' ]]; then
-        eval "${log_error}" || echo  "Current context require us to run as root (GID = 0) but we have GID ${identity_uid}"
+        eval "${log_error}" || echo \
+            "Current context require us to run as root (GID = 0)"\
+            "but we have GID ${identity_uid}"
         return 1
     fi
 }
@@ -659,37 +825,56 @@ identity_require_root() {
 identity_require_non_root() {
     identity_get_name_uid_gid
     if [[ "${identity_name}" == 'root' ]]; then
-        eval "${log_error}" || echo  'Current context require us to NOT run as root but we are root'
+        eval "${log_error}" || echo \
+            'Current context require us to NOT run as root but we are root'
         return 1
     fi
-    if [[ "${uid}" == '0' ]]; then
-        eval "${log_error}" || echo  'Current context require us to NOT run as root (UID != 0) but we have UID 0'
+    if [[ "${identity_uid}" == '0' ]]; then
+        eval "${log_error}" || echo \
+            'Current context require us to NOT run as root (UID != 0)'\
+            'but we have UID 0'
         return 1
     fi
-    if [[ "${gid}" == '0' ]]; then
-        eval "${log_error}" || echo  'Current context require us to NOT run as root (GID != 0) but we have GID 0'
+    if [[ "${identity_gid}" == '0' ]]; then
+        eval "${log_error}" || echo \
+            'Current context require us to NOT run as root (GID != 0)'\
+            'but we have GID 0'
         return 1
     fi
 }
 
 identity_require_mapped_root() {
     identity_require_root
-    eval "${log_info}" || echo 'Trying to write content under /sys to check whether we were mapped to root or are real root'
+    eval "${log_info}" || echo \
+        'Trying to write content under /sys to check whether we were'\
+        'mapped to root or are real root.'\
+        'Expecting a write failure...'
     if echo test > /sys/sys_write_test; then
-        eval "${log_error}" || echo 'We can write to /sys which means we have real root permission, refuse to continue as real root'
+        eval "${log_error}" || echo \
+            'We can write to /sys which means we have real root permission,'\
+            'refuse to continue as real root'
         return 1
     else
-        eval "${log_info}" || echo 'We are not real root and were just mapped to root in child namespace, everything looks good'
+        eval "${log_info}" || echo \
+            'We are not real root and were just mapped to root'\
+            'in child namespace, everything looks good'
     fi
 }
 
 identity_get_subid() { #1: type
     declare -n identity_id="identity_$1"
-    local identity_subids=($(sed -n 's/^'"${identity_name}"':\([0-9]\+:[0-9]\+\)$/\1/p' "/etc/sub$1"))
+    local identity_subids=($(
+        sed -n 's/^'"${identity_name}"':\([0-9]\+:[0-9]\+\)$/\1/p' \
+            "/etc/sub$1"))
     if [[ "${#identity_subids[@]}" == 0 ]]; then
-        identity_get_subids=($(sed -n 's/^'"${identity_id}"':\([0-9]\+:[0-9]\+\)$/\1/p' "/etc/sub$1"))
+        identity_get_subids=($(
+            sed -n 's/^'"${identity_id}"':\([0-9]\+:[0-9]\+\)$/\1/p' \
+                "/etc/sub$1"))
         if [[ "${#identity_subids[@]}" == 0 ]]; then
-            eval "${log_error}" || echo "Could not find ${1}map record for user ${identity_name} ($1 ${identity_id}) in /etc/sub$1"
+            eval "${log_error}" || echo \
+                "Could not find ${1}map record for"\
+                "user ${identity_name} ($1 ${identity_id})"\
+                "from /etc/sub$1"
             return 1
         fi
     fi
@@ -698,27 +883,29 @@ identity_get_subid() { #1: type
 
 identity_get_subids() {
     # We need to map the user to 0:0, and others to 1:65535
-    # The following function is currently not needed here as we're called at a very late time at which those were already gotten
-    # but keep it in case we want to swap some logic around
-    # identity_get_name_uid_gid
     identity_get_subid uid
     identity_subuid_range="${identity_subid#*:}"
     if [[ "${identity_subuid_range}" -lt 65535 ]]; then
-        eval "${log_error}" || echo "Recorded subuid range in /etc/subuid too short (${identity_subuid_range} < 65535)"
+        eval "${log_error}" || echo \
+            "Recorded subuid range in /etc/subuid too short"\
+            "(${identity_subuid_range} < 65535)"
         exit 1
     fi
     identity_subuid_start="${identity_subid%:*}"
     identity_get_subid gid
     identity_subgid_range="${identity_subid#*:}"
     if [[ "${identity_subgid_range}" -lt 65535 ]]; then
-        eval "${log_error}" || echo "Recorded subgid range in /etc/subgid too short (${identity_subgid_range} < 65535)"
+        eval "${log_error}" || echo \
+            "Recorded subgid range in /etc/subgid too short"\
+            "(${identity_subgid_range} < 65535)"
         exit 1
     fi
     identity_subgid_start="${identity_subid%:*}"
 }
 
 child_wait() {
-    eval "${log_debug}" || echo "Child $$ started and waiting for parent to map us..."
+    eval "${log_debug}" || echo \
+        "Child $$ started and waiting for parent to map us..."
     local i mapped=''
     for i in {0..10}; do
         if identity_require_mapped_root; then
@@ -729,7 +916,8 @@ child_wait() {
         sleep 1
     done
     if [[ -z "${mapped}" ]]; then
-        eval "${log_error}" || echo 'Give up after waiting for 10 seconds yet parents fail to map us'
+        eval "${log_error}" || echo \
+            'Give up after waiting for 10 seconds yet parents fail to map us'
         return 1
     fi
     eval "${log_debug}" || echo 'Child wait complete'
@@ -737,6 +925,20 @@ child_wait() {
 
 child_fs() {
     rm -rf "${path_root}"
+    mkdir "${path_root}"
+    case "${tmpfs_root}" in
+    '') : ;;
+    'yes'|'true')
+        eval "${log_info}" || echo \
+            "Using tmpfs for root '${path_root}', with default mount options"
+        mount -t tmpfs tmpfs-root "${path_root}"
+        ;;
+    *)
+        eval "${log_info}" || echo \
+            "Using tmpfs for root '${path_root}', options: '${tmpfs_root}'"
+        mount -t tmpfs -o "${tmpfs_root}" tmpfs-root "${path_root}"
+        ;;
+    esac
     mkdir -p "${path_root}"/{boot,dev,etc/pacman.d,proc,run,sys,tmp,var/{cache/pacman/pkg,lib/pacman,log}}
     mount "${path_root}" "${path_root}" -o bind
     mount tmpfs-dev "${path_root}"/dev -t tmpfs -o mode=0755,nosuid
@@ -745,7 +947,8 @@ child_fs() {
     chmod 1777 "${path_root}"/{dev/shm,tmp}
     chmod 555 "${path_root}"/{proc,sys}
     mount proc "${path_root}"/proc -t proc -o nosuid,noexec,nodev
-    mount devpts "${path_root}"/dev/pts -t devpts -o mode=0620,gid=5,nosuid,noexec
+    mount devpts "${path_root}"/dev/pts -t devpts \
+        -o mode=0620,gid=5,nosuid,noexec
     local node
     for node in full null random tty urandom zero; do
         devnode="${path_root}"/dev/"${node}"
@@ -762,7 +965,15 @@ child_fs() {
 }
 
 child_clean() {
-    rm -rf "${path_root}"/dev/* cache/sys/*
+    if [[ "${tmpfs_root}" ]]; then
+        eval "${log_info}" || echo 'Using tmpfs, skipped cleaning'
+        return
+    fi
+    eval "${log_info}" || echo 'Child cleaning...'
+    eval "${log_info}" || echo 'Umounting rootfs...'
+    umount -R "${path_root}"
+    eval "${log_info}" || echo 'Deleting rootfs leftovers...'
+    rm -rf "${path_root}"
 }
 
 child() {
@@ -779,8 +990,10 @@ child() {
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
     done
     eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
-    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" --exclude ./dev --exclude ./proc --exclude ./sys .
+    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" \
+        --exclude ./dev --exclude ./proc --exclude ./sys .
     mv "${out_root_tar}"{.temp,}
+    child_clean
     eval "${log_info}" || echo 'Child exiting!!'
 }
 
@@ -794,7 +1007,9 @@ prepare_child_context() {
 }
 
 run_child_and_wait_sync() {
-    eval "${log_info}" || echo 'System unshare support --map-users and --map-groups, using unshare itself to map'
+    eval "${log_info}" || echo \
+        'System unshare support --map-users and --map-groups,'\
+        'using unshare itself to map'
     eval "${log_info}" || echo 'Spwaning child (sync)...'
     unshare --user --pid --mount --fork \
         --map-root-user \
@@ -805,21 +1020,32 @@ run_child_and_wait_sync() {
 }
 
 run_child_and_wait_async() {
-    eval "${log_info}" || echo 'System unshare does not support --map-users and --map-groups, mapping manually using newuidmap and newgidmap'
+    eval "${log_info}" || echo \
+        'System unshare does not support --map-users and --map-groups,'\
+        'mapping manually using newuidmap and newgidmap'
     eval "${log_info}" || echo 'Spwaning child (async)...'
     unshare --user --pid --mount --fork \
         /bin/bash cache/child.sh  &
     pid_child="$!"
     sleep 1
-    newuidmap "${pid_child}" 0 "${identity_uid}" 1 1 "${identity_subuid_start}" "${identity_subuid_range}"
-    newgidmap "${pid_child}" 0 "${identity_gid}" 1 1 "${identity_subgid_start}" "${identity_subgid_range}"
-    eval "${log_info}" || echo "Mapped UIDs and GIDs for child ${pid_child}, waiting for it to finish..."
+    newuidmap "${pid_child}" \
+        0 "${identity_uid}" \
+        1 1 \
+        "${identity_subuid_start}" "${identity_subuid_range}"
+    newgidmap "${pid_child}" \
+        0 "${identity_gid}" \
+        1 1 \
+        "${identity_subgid_start}" "${identity_subgid_range}"
+    eval "${log_info}" || echo \
+        "Mapped UIDs and GIDs for child ${pid_child}, "\
+        "waiting for it to finish..."
     wait "${pid_child}"
     eval "${log_info}" || echo "Child ${pid_child} finished successfully"
 }
 
 run_child_and_wait() {
-    local unshare_fields=$(unshare --help | sed 's/^ \+--map-users=\(.\+\)$/\1/p' -n)
+    local unshare_fields=$(
+        unshare --help | sed 's/^ \+--map-users=\(.\+\)$/\1/p' -n)
     # Just why do they change the CLI so frequently?
     case "${unshare_fields}" in
     '<inneruid>:<outeruid>:<count>') # 2.40, Arch
@@ -838,12 +1064,19 @@ run_child_and_wait() {
     esac
 }
 
+clean() {
+    rm -rf "${path_root}"
+}
+
 work() {
-    eval "${log_info}" || echo "Building for distro '${distro}' to architecture '${arch_target}' from architecture '${arch_host}'"
+    eval "${log_info}" || echo \
+        "Building for distro '${distro}' to architecture '${arch_target}'"\
+        "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
     identity_get_subids
     run_child_and_wait
+    clean
 }
 
 aimager() {
@@ -951,12 +1184,16 @@ aimager_cli() {
             build_id="$2"
             shift
             ;;
-        '--overlay')
-            overlays+=("$2")
-            shift
-            ;;
         '--inird-maker')
             initrd_maker="$2"
+            shift
+            ;;
+        '--out-prefix')
+            out_prefix="$2"
+            shift
+            ;;
+        '--overlay')
+            overlays+=("$2")
             shift
             ;;
         '--repo-core')
@@ -973,20 +1210,26 @@ aimager_cli() {
             shift
             ;;
         '--repo-url-'*)
-            repo_url["${1:11}"]="$2"
+            repo_urls["${1:11}"]="$2"
             shift
             ;;
         # Run-time behaviour options
-        '--freeze-pacman')
-            freeze_pacman='yes'
+        '--freeze-pacman-config')
+            freeze_pacman_config=1
+            ;;
+        '--freeze-pacman-static')
+            freeze_pacman_static=1
             ;;
         '--reuse-root-tar')
             reuse_root_tar="$2"
             shift
             ;;
         '--tmpfs-root')
-            tmpfs_root=1
+            tmpfs_root="$2"
             shift
+            ;;
+        '--use-pacman-static')
+            use_pacman_static=1
             ;;
         # Run-target options
         '--binfmt-check')
