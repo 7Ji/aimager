@@ -31,7 +31,7 @@ aimager_init() {
     # pipefail: error if not a whole pipe is successful
     set -euo pipefail
     # log macros expansion
-    local log_common_start='echo -n "['
+    local log_common_start='echo -n "[${script_name}:'
     local log_common_end='] ${FUNCNAME}@${LINENO}: " && false'
     log_debug="${log_common_start}DEBUG${log_common_end}"
     log_info="${log_common_start}INFO${log_common_end}"
@@ -60,6 +60,8 @@ aimager_init() {
         ;;
     esac
     # variables
+    ## global decorator
+    script_name=aimager.sh
     ## architecture
     arch_host=$(uname -m)
     arch_target="${arch_host}"
@@ -1002,6 +1004,7 @@ prepare_child_context() {
         echo 'set -euo pipefail'
         declare -p | grep 'declare -[-fFgIpaAilnrtux]\+ [a-z_]'
         declare -f
+        echo 'script_name=child.sh'
         echo 'child'
     } >  cache/child.sh
 }
@@ -1065,6 +1068,7 @@ run_child_and_wait() {
 }
 
 clean() {
+    eval "${log_info}" || echo 'Cleaning up before exiting...'
     rm -rf "${path_root}"
 }
 
@@ -1088,6 +1092,7 @@ aimager() {
     fi
     check
     work
+    eval "${log_info}" || echo 'aimager exiting!!'
 }
 
 help_aimager() {
