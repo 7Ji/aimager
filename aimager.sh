@@ -458,28 +458,126 @@ source() { no_source; }
 .() { no_source; }
 board_none() { :; }
 
+# sector_from_maybe_size() {
+#     case "${1,,}" in
+#     *b)
+#         echo $(( "${1::-1}" / 512 ))
+#         ;;
+#     *k)
+#         echo $(( "${1::-1}" * 2 ))
+#         ;;
+#     *m)
+#         echo $(( "${1::-1}" * 2048 ))
+#         ;;
+#     *g)
+#         echo $(( "${1::-1}" * 2097152 ))
+#         ;;
+#     *t)
+#         echo $(( "${1::-1}" * 2147483648 ))
+#         ;;
+#     *)
+#         echo "$1"
+#         ;;
+#     esac
+# }
+
+table_gpt_header() {
+    printf '%s:%s\n' \
+        label gpt \
+        sector-size 512 \
+
+}
+
+table_mbr_header() {
+    printf '%s:%s\n' \
+        label mbr \
+        sector-size 512 \
+
+}
+
+table_part() { #1 name, 2 start, 3 size, 4 type, 5 suffix
+    echo -n "name=$1," # for mbr this does nothing, but we use it for marks
+    if [[ "$2" ]]; then
+        echo -n "start=$2,"
+    fi
+    echo "size=$3,type=$4$5"
+}
+
+_table_common_mbr_1g_esp() {
+    table_mbr_header
+    table_part boot '' 1G uefi ',bootable'
+}
+
+_table_common_gpt_1g_esp() {
+    table_gpt_header
+    table_part boot '' 1G uefi ''
+}
+
+table_common_gpt_1g_esp_16g_root_aarch64() {
+    _table_common_gpt_1g_esp
+    table_part root '' 16G '"Linux root (ARM-64)"' ''
+}
+
+table_common_gpt_1g_esp_16g_root_x86_64() {
+    _table_common_gpt_1g_esp
+    table_part root '' 16G '"Linux root (x86-64)"' ''
+}
+
+table_common_mbr_16g_root() {
+    table_mbr_header
+    table_part root '' 16G linux ',bootable'
+}
+
+table_common_mbr_1g_esp_16g_root_aarch64() {
+    _table_common_mbr_1g_esp
+    table_part root '' 16G 
+}
+
+help_table() {
+    local name prefix=table_common_ tables=()
+    for name in $(declare -F); do
+        if [[ "${name}" == "${prefix}"* && ${#name} -gt 13 ]]; then
+            tables+=("+${name:13}")
+        fi
+    done
+    eval "${log_info}" || echo "Available common tables: ${tables[@]}"
+    return
+}
+
 board_x64_uefi() {
     distro='Arch Linux'
     arch_target='x86_64'
     bootloader='systemd-boot'
+    if [[ -z "${table:-}" ]]; then
+        table='+gpt_1g_esp_16g_root_x86_64'
+    fi
 }
 
 board_x86_legacy() {
     distro='Arch Linux 32'
     arch_target='i686'
     bootloader='syslinux'
+    if [[ -z "${table:-}" ]]; then
+        table='+mbr_16g_root'
+    fi
 }
 
 board_amlogic_s9xxx() {
     distro='Arch Linux ARM'
     arch_target='aarch64'
     bootloader='u-boot'
+    if [[ -z "${table:-}" ]]; then
+        table='+mbr_1g_esp_16g_root_aarch64'
+    fi
 }
 
 _board_orangepi_5_family() {
     distro='Arch Linux ARM'
     arch_target='aarch64'
     bootloader='u-boot'
+    if [[ -z "${table:-}" ]]; then
+        table='+gpt_1g_esp_16g_root_aarch64'
+    fi
 }
 
 board_orangepi_5() {
@@ -768,32 +866,44 @@ configure_out() {
     out_root_tar="${out_prefix}root.tar"
 }
 
-# configure_table() {
-#     eval "${log_info}" || echo 'Configuring partition table...'
-#     case "${table}" in
-#     '@'*))
-#         eval "${log_info}" || echo \\
-#             "Reading sfdisk-dump-like from '${table:1}'..."
-#         table=$(<"${table:1}")
-#         ;;
-#     '+'*)
-#         case "${table:1}" in
-#         'gpt_'
-
-#         esac
-#         ;;
-#     esac
-#     if ! eval "${log_info}"; then
-#         echo "Parsing the following sfdisk-dump-like partition table:"
-#         echo "${table}"
-#     fi
-# }
+configure_table() {
+    eval "${log_info}" || echo 'Configuring partition table...'
+    case "${table}" in
+    '@'*)
+        eval "${log_info}" || echo \\
+            "Reading sfdisk-dump-like from '${table:1}'..."
+        table=$(<"${table:1}")
+        ;;
+    '+'*)
+        local table_func="${table:1}"
+        eval "${log_info}" || echo "Using common table '${table_func}'" 
+        local table_func="table_common_${table_func/-/_}"
+        if [[ $(type -t "${table_func}") == function ]]; then
+            table=$("${table_func}")
+        else
+            eval "${log_error}" || echo \
+                "Common table '${table}' is not supported, pass --table help"\
+                "to get a list of pre-defined common tabless"
+            return 1
+        fi
+        ;;
+    '')
+        eval "${log_error}" || echo \
+            'Table not defined, please define it with --table'
+            return 1
+        ;;
+    esac
+    if ! eval "${log_info}"; then
+        echo "Using the following partition table:"
+        echo "${table}"
+    fi
+}
 
 configure_dynamic() {
     configure_architecture
     configure_build
     configure_out
-    # configure_table
+    configure_table
 }
 
 configure() {
@@ -1333,6 +1443,12 @@ aimager_cli() {
             shift
             ;;
         '--table')
+            case "$2" in
+            'help'|'+help')
+                help_table
+                return
+                ;;
+            esac
             table="$2"
             shift
             ;;
