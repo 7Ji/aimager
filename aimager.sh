@@ -76,9 +76,9 @@ aimager_init() {
     repo_core=''
     repos_base=()
     ## repo definition option
+    repo_keyrings=()
     repo_url_parent=''
     declare -gA repo_urls
-    declare -gA repo_keyrings
     reuse_root_tar=''
     ## run-time behaviour
     freeze_pacman_config=0
@@ -524,7 +524,7 @@ repo_7Ji() {
             repo_urls['7Ji']='https://github.com/$repo/archrepo/releases/download/$arch'
         fi
     fi
-    repo_keyrings['7Ji']='7ji-keyring'
+    repo_keyrings+=('7ji-keyring')
 }
 
 # https://arch4edu.org/
@@ -536,7 +536,7 @@ repo_arch4edu() {
             repo_urls['arch4edu']='https://repository.arch4edu.org/$arch'
         fi
     fi
-    repo_keyrings['archlinuxcn']='arch4edu-keyring'
+    repo_keyrings+=('arch4edu-keyring')
 }
 
 # https://www.archlinuxcn.org/archlinux-cn-repo-and-mirror/
@@ -548,7 +548,7 @@ repo_archlinuxcn() {
             repo_urls['archlinuxcn']='https://repo.archlinuxcn.org/$arch'
         fi
     fi
-    repo_keyrings['archlinuxcn']='archlinuxcn-keyring'
+    repo_keyrings+=('archlinuxcn-keyring')
 }
 
 require_arch_target() {
@@ -619,6 +619,7 @@ distro_archlinuxarm() {
         fi
     fi
     declare -gn repo_url_base=repo_urls['archlinuxarm']
+    repo_keyrings+=('archlinuxarm-keyring')
 }
 
 distro_loongarchlinux() {
@@ -992,12 +993,22 @@ child() {
         eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
         bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C "${path_root}"
     else
-        pacman -Sy --config "${path_etc}/pacman-loose.conf" --noconfirm base
+        pacman -Sy --config "${path_etc}/pacman-loose.conf" --noconfirm \
+            base "${repo_keyrings[@]}"
+        eval "${log_info}" || echo \
+            "Entering chroot to run the minimum executeble 'true' to check if"\
+            "QEMU binfmt works properly (ignore this if you are not"\
+            "cross-building)..."
+        chroot "${path_root}" pacman-key --init
+        chroot "${path_root}" pacman-key --populate
     fi
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
     done
+    pacman -Sy --config "${path_etc}/pacman-strict.conf" --noconfirm \
+        vim nano sudo
+    chroot "${path_root}" pkill gpg-agent
     eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
     bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" \
         --exclude ./dev --exclude ./proc --exclude ./sys .
