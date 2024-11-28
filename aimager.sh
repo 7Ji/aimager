@@ -71,10 +71,12 @@ aimager_init() {
     ## caller-defined config options
     build_id=''
     initrd_maker=''
+    install_pkgs=()
     out_prefix=''
     overlays=()
     repo_core=''
     repos_base=()
+    table=''
     ## repo definition option
     repo_keyrings=()
     repo_url_parent=''
@@ -85,7 +87,7 @@ aimager_init() {
     freeze_pacman_static=0
     tmpfs_root=''
     use_pacman_static=0
-    exit_after_child_prepared=0
+    exit_before_child=0
     ## run target options
     run_binfmt_check=''
 }
@@ -733,9 +735,9 @@ configure_architecture() {
         arch_target='loong64'
     fi
     if [[ "${arch_host}" != "${arch_target}" ]]; then
-        architecture_cross='yes'
+        arch_cross=1
     else
-        architecture_cross=''
+        arch_cross=0
     fi
 }
 
@@ -766,10 +768,32 @@ configure_out() {
     out_root_tar="${out_prefix}root.tar"
 }
 
+# configure_table() {
+#     eval "${log_info}" || echo 'Configuring partition table...'
+#     case "${table}" in
+#     '@'*))
+#         eval "${log_info}" || echo \\
+#             "Reading sfdisk-dump-like from '${table:1}'..."
+#         table=$(<"${table:1}")
+#         ;;
+#     '+'*)
+#         case "${table:1}" in
+#         'gpt_'
+
+#         esac
+#         ;;
+#     esac
+#     if ! eval "${log_info}"; then
+#         echo "Parsing the following sfdisk-dump-like partition table:"
+#         echo "${table}"
+#     fi
+# }
+
 configure_dynamic() {
     configure_architecture
     configure_build
     configure_out
+    # configure_table
 }
 
 configure() {
@@ -974,12 +998,101 @@ child_fs() {
     ln -s $(readlink -f /dev/stdout) "${path_root}"/dev/console
 }
 
+child_check_binfmt() {
+    if (( "${arch_cross}" )); then
+        eval "${log_info}" || echo \
+            "Entering chroot to run the minimum executeble 'true' to check if"\
+            "QEMU binfmt works properly"
+        chroot "${path_root}" true
+    fi
+}
+
+child_init_reuse() {
+    eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
+    bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C "${path_root}"
+    child_check_binfmt
+}
+
+child_init_keyring() {
+    if [[ ! -f "${keyring_archive}" ]]; then
+        eval "${log_info}" || echo \
+            "Initializing keyring '${keyring_id}' for the first time..."
+        chroot "${path_root}" pacman-key --init
+        eval "${log_info}" || echo \
+            "Populating keyring '${keyring_id}' for the first time..."
+        chroot "${path_root}" pacman-key --populate
+    fi
+    mkdir -p cache/keyring
+    eval "${log_info}" || echo \
+        "Creating keyring backup archive '${keyring_archive}'..."
+    bsdtar --acls --xattrs -cpf "${keyring_archive}" -C "${path_keyring}" \
+        --exclude ./S.\* .
+}
+
+child_init_bootstrap() {
+    local keyring_id=$(
+        echo -n "${distro_safe}"
+        printf '+%s' "${repo_keyrings[@]}"
+    )
+    local keyring_archive=cache/keyring/"${keyring_id}".tar
+    local path_keyring="${path_root}/etc/pacman.d/gnupg"
+    local config
+    if [[ -f "${keyring_archive}" ]]; then
+        eval "${log_info}" || echo \
+            "Reusing keyring archive '${keyring_archive}'..."
+        mkdir -p "${path_keyring}"
+        bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"
+        config="${path_etc}/pacman-strict.conf"
+    else
+        eval "${log_warn}" || echo \
+            "This seems our first attempt to install for ${keyring_id},"\
+            "using loose pacman config and would not go back to verify the"\
+            "bootstrap packages. It is recommended to rebuild after this try!"
+        config="${path_etc}/pacman-loose.conf"
+    fi
+    pacman -Sy --config "${config}" --noconfirm base "${repo_keyrings[@]}"
+    child_check_binfmt
+    child_init_keyring
+}
+
+child_init() {
+    if [[ "${reuse_root_tar}" ]]; then
+        child_init_reuse
+    else
+        child_init_bootstrap
+    fi
+}
+
+child_setup() {
+    local overlay
+    for overlay in "${overlays[@]}"; do
+        bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
+    done
+    if (( "${#install_pkgs[@]}" )); then
+        eval "${log_info}" || echo \
+            "Installing the following packages: ${install_pkgs[*]}"
+        pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
+            "${install_pkgs[@]}"
+    fi
+}
+
+child_out() {
+    eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
+    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" \
+        --exclude ./dev --exclude ./proc --exclude ./sys \
+        --exclude ./etc/pacman.d/gnupg/S.\* \
+        .
+    mv "${out_root_tar}"{.temp,}
+}
+
 child_clean() {
+    eval "${log_info}" || echo 'Child cleaning...'
+    eval "${log_info}" || echo 'Killing child gpg-agent...'
+    chroot "${path_root}" pkill --echo '^gpg-agent$' || true
     if [[ "${tmpfs_root}" ]]; then
         eval "${log_info}" || echo 'Using tmpfs, skipped cleaning'
         return
     fi
-    eval "${log_info}" || echo 'Child cleaning...'
     eval "${log_info}" || echo 'Umounting rootfs...'
     umount -R "${path_root}"
     eval "${log_info}" || echo 'Deleting rootfs leftovers...'
@@ -989,30 +1102,9 @@ child_clean() {
 child() {
     child_wait
     child_fs
-    if [[ "${reuse_root_tar}" ]]; then
-        eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
-        bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C "${path_root}"
-    else
-        pacman -Sy --config "${path_etc}/pacman-loose.conf" --noconfirm \
-            base "${repo_keyrings[@]}"
-        eval "${log_info}" || echo \
-            "Entering chroot to run the minimum executeble 'true' to check if"\
-            "QEMU binfmt works properly (ignore this if you are not"\
-            "cross-building)..."
-        chroot "${path_root}" pacman-key --init
-        chroot "${path_root}" pacman-key --populate
-    fi
-    local overlay
-    for overlay in "${overlays[@]}"; do
-        bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
-    done
-    pacman -Sy --config "${path_etc}/pacman-strict.conf" --noconfirm \
-        vim nano sudo
-    chroot "${path_root}" pkill gpg-agent
-    eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
-    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" \
-        --exclude ./dev --exclude ./proc --exclude ./sys .
-    mv "${out_root_tar}"{.temp,}
+    child_init
+    child_setup
+    child_out
     child_clean
     eval "${log_info}" || echo 'Child exiting!!'
 }
@@ -1096,8 +1188,8 @@ work() {
         "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
-    if (( "${exit_after_child_prepared}" )); then
-        eval "${log_info}" || echo 'Early exiting after child prepared...'
+    if (( "${exit_before_child}" )); then
+        eval "${log_info}" || echo 'Early exiting before spawning child ...'
         return
     fi
     identity_get_subids
@@ -1178,6 +1270,7 @@ aimager_cli() {
     # declare -A config_dynamic
     # declare
     local args_original="$@"
+    local install_pkgs_new=()
     while (( $# > 0 )); do
         case "$1" in
         # Architecture options
@@ -1215,6 +1308,15 @@ aimager_cli() {
             initrd_maker="$2"
             shift
             ;;
+        '--install-pkg')
+            install_pkgs+=("$2")
+            shift
+            ;;
+        '--install-pkgs')
+            IFS=', ' read -r -a install_pkgs_new <<< "$2"
+            install_pkgs+=("${install_pkgs_new[@]}")
+            shift
+            ;;
         '--out-prefix')
             out_prefix="$2"
             shift
@@ -1231,6 +1333,10 @@ aimager_cli() {
             IFS=', ' read -r -a repos_base <<< "$2"
             shift
             ;;
+        '--table')
+            table="$2"
+            shift
+            ;;
         # Repo-definition options
         '--repo-url-parent')
             repo_url_parent="$2"
@@ -1241,8 +1347,8 @@ aimager_cli() {
             shift
             ;;
         # Run-time behaviour options
-        '--exit-after-child-prepared')
-            exit_after_child_prepared=1
+        '--exit-before-child')
+            exit_before_child=1
             ;;
         '--freeze-pacman-config')
             freeze_pacman_config=1
