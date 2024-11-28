@@ -1030,10 +1030,7 @@ child_init_keyring() {
 }
 
 child_init_bootstrap() {
-    local keyring_id=$(
-        echo -n "${distro_safe}"
-        printf '+%s' "${repo_keyrings[@]}"
-    )
+    local keyring_id=$(printf '%s+' "${distro_safe}" "${repo_keyrings[@]}")
     local keyring_archive=cache/keyring/"${keyring_id}".tar
     local path_keyring="${path_root}/etc/pacman.d/gnupg"
     local config
@@ -1071,8 +1068,8 @@ child_setup() {
     if (( "${#install_pkgs[@]}" )); then
         eval "${log_info}" || echo \
             "Installing the following packages: ${install_pkgs[*]}"
-        pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
-            "${install_pkgs[@]}"
+        pacman -Su --config "${path_etc}/pacman-strict.conf" --noconfirm \
+            "${install_pkgs[@]}" lsof
     fi
 }
 
@@ -1088,11 +1085,13 @@ child_out() {
 child_clean() {
     eval "${log_info}" || echo 'Child cleaning...'
     eval "${log_info}" || echo 'Killing child gpg-agent...'
-    chroot "${path_root}" pkill --echo '^gpg-agent$' || true
+    chroot "${path_root}" pkill -SIGINT --echo '^gpg-agent$' || true
     if [[ "${tmpfs_root}" ]]; then
         eval "${log_info}" || echo 'Using tmpfs, skipped cleaning'
         return
     fi
+    eval "${log_info}" || echo 'Syncing after killing gpg-agent...'
+    sync
     eval "${log_info}" || echo 'Umounting rootfs...'
     umount -R "${path_root}"
     eval "${log_info}" || echo 'Deleting rootfs leftovers...'
@@ -1278,7 +1277,7 @@ aimager_cli() {
             arch_host="$2"
             shift
             ;;
-        '--arch-target')
+        '--arch-target'|'--arch')
             arch_target="$2"
             shift
             ;;
