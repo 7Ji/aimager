@@ -87,9 +87,9 @@ aimager_init() {
     freeze_pacman_static=0
     tmpfs_root=''
     use_pacman_static=0
-    before_spawn=0
     ## run target options
-    run_binfmt_check=''
+    run_binfmt_check=0
+    run_before_spawn=0
 }
 
 # check if an executable exists
@@ -924,16 +924,24 @@ check() {
 binfmt_check() {
     if [[ "${arch_target}" == loong64 ]]; then
         local arch_target=loongarch64
-    fi 
-    if [[ "${arch_host}" != "${arch_target}" ]]; then
+    fi
+    if [[ "${arch_host}" == "${arch_target}" ]]; then
+        eval "${log_warn}" || echo \
+            "Host architecture ${arch_host} =="\
+            "target architecture ${arch_target},"\
+            "no need nor use to run binfmt check"
+    else
+        local dir_aimager=$(readlink -f "$0")
+        dir_aimager="${dir_aimager%/*}"
         eval "${log_warn}" || echo \
             "Host architecture ${arch_host} !="\
             "target architecture ${arch_target},"\
             "checking if we have binfmt ready"
         eval "${log_info}" || echo \
             "Running the following test command: "\
-            "'sh -c \"cd test/binfmt; ./test.sh ${arch_target}\"'"
-        sh -c 'cd test/binfmt; ./test.sh '"${arch_target}"
+            "'sh -c \"cd '${dir_aimager}/test/binfmt';"\
+            "./test.sh '${arch_target}'\"'"
+        sh -c "cd '${dir_aimager}/test/binfmt'; ./test.sh '${arch_target}'"
         pwd
     fi
 }
@@ -1297,7 +1305,7 @@ work() {
         "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
-    if (( "${before_spawn}" )); then
+    if (( "${run_before_spawn}" )); then
         eval "${log_info}" || echo 'Early exiting before spawning child ...'
         return
     fi
@@ -1309,7 +1317,7 @@ work() {
 aimager() {
     identity_require_non_root
     configure
-    if  [[ "${run_binfmt_check}" ]]; then
+    if  (( "${run_binfmt_check}" )); then
         binfmt_check
         return
     fi
@@ -1485,14 +1493,14 @@ aimager_cli() {
             ;;
         # Run-target options
         '--binfmt-check')
-            run_binfmt_check='yes'
+            run_binfmt_check=1
             ;;
         '--help')
             help_aimager
             return 0
             ;;
         '--before-spwan')
-            before_spawn=1
+            run_before_spawn=1
             ;;
         *)
             if ! eval "${log_error}"; then
