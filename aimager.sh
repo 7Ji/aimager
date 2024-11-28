@@ -85,6 +85,7 @@ aimager_init() {
     freeze_pacman_static=0
     tmpfs_root=''
     use_pacman_static=0
+    exit_after_child_prepared=0
     ## run target options
     run_binfmt_check=''
 }
@@ -155,14 +156,12 @@ check_executables() {
     check_executable_must_exist tar 'extract file from archives'
     check_executable_must_exist uname 'dump machine architecture'
     check_executable_must_exist unshare 'unshare child process'
-    if (( "${use_pacman_static}" )); then
-        update_pacman_static
-    else
-        check_executable pacman 'install packages' update_pacman_static
-    fi
-    if [[ -f cache/bin/pacman && -z "${freeze_pacman:-}" ]] ; then
-        update_pacman_static
-    fi
+    if (( "${use_pacman_static}" )) ||
+        ! check_executable_must_exist pacman 'install packages'
+    then
+        use_pacman_static=1
+        update_and_use_pacman_static
+    fi 
     eval "${log_info}" || echo "Say hello to our hero Pacman O<. ."
     pacman --version
 }
@@ -211,13 +210,13 @@ touched_after_start() { #1: path
 # would not be re-cached
 # SET: db_path
 # SET: mirror_formatted @mirror_format
-cache_repo_db() { #1: repo url, 2: repo name, 3: arch
-    mirror_format "$1" "$2" "$3"
-    db_path="cache/repo/$2:$3.db"
+cache_repo_db() { #1: repo url, 2: repo prefix, 2: repo name, 4: arch
+    mirror_format "$1" "$3" "$4"
+    db_path="cache/repo/$2$3:$4.db"
     if touched_after_start "${db_path}"; then
         return
     fi
-    download "${mirror_formatted}/$2.db" "${db_path}"
+    download "${mirror_formatted}/$3.db" "${db_path}"
 }
 
 # cache a pkg from a repo lazily, if it already exists locally then it would not
@@ -227,10 +226,11 @@ cache_repo_db() { #1: repo url, 2: repo name, 3: arch
 # SET: pkg_filename
 # SET: pkg_path
 # SET: pkg_ver
-cache_repo_pkg() { #1: repo url, 2: repo name, 3: arch, 4: package
-    cache_repo_db "$1" "$2" "$3"
+#1: repo url, 2: repo prefix, 3: repo name, 4: arch, 5: package
+cache_repo_pkg() {
+    cache_repo_db "${@:1:4}"
     local cache_names_versions=$(
-        tar -xOf "${db_path}" --wildcards "$4"'-*/desc' |
+        tar -xOf "${db_path}" --wildcards "$5"'-*/desc' |
         sed -n '/%FILENAME/{n;p;};/%NAME%/{n;p;};/%VERSION%/{n;p;}'
     )
     local filenames=($(sed -n 'p;n;n' <<< "${cache_names_versions}"))
@@ -253,27 +253,27 @@ cache_repo_pkg() { #1: repo url, 2: repo name, 3: arch, 4: package
     local filename= name=
     local i=0
     for name in "${names[@]}"; do
-        if [[ "${name}" == "$4" ]]; then
+        if [[ "${name}" == "$5" ]]; then
             filename="${filenames[$i]}"
             pkg_ver="${versions[$i]}"
             break
         fi
         i=$(( $i + 1 ))
     done
-    if [[ "${name}" == "$4" ]] && 
+    if [[ "${name}" == "$5" ]] && 
         [[ "${filename}" ]] && 
         [[ "${pkg_ver}" ]]
     then
         :
     else
         eval "${log_error}" || echo \
-            "Failed to get package '$4' of arch '$3' from repo '$2' at '$1'"
+            "Failed to get package '$5' of arch '$4' from repo '$2$3' at '$1'"
         return 1
     fi
     eval "${log_info}" || echo \
-        "Latest '$4' of arch '$3' from repo '$2' at '$1'"\
+        "Latest '$5' of arch '$4' from repo '$2$3' at '$1'"\
         "is at version '${pkg_ver}'"
-    pkg_filename="$2:$3:${filename}"
+    pkg_filename="$2$3:$4:${filename}"
     pkg_path=cache/pkg/"${pkg_filename}"
     if [[ -f "${pkg_path}" ]]; then
         eval "${log_info}" || echo \
@@ -291,28 +291,31 @@ cache_repo_pkg() { #1: repo url, 2: repo name, 3: arch, 4: package
 # SET: pkg_filename @cache_repo_pkg
 # SET: pkg_path @cache_repo_pkg
 # SET: pkg_ver @cache_repo_pkg
-# 1: repo url, 2: repo name, 3: arch, 4: package, 5: path in pkg
+# 1: repo url, 2: repo prefix, 3: repo name, 4: arch, 5: package, 6: path in pkg
 cache_repo_pkg_file() { 
-    cache_repo_pkg "$1" "$2" "$3" "$4"
+    cache_repo_pkg "${@:1:5}"
     pkg_dir="${pkg_path%.pkg.tar*}"
     mkdir -p "${pkg_dir}"
-    tar -C "${pkg_dir}" -xf "cache/pkg/${pkg_filename}" "$5"
+    tar -C "${pkg_dir}" -xf "cache/pkg/${pkg_filename}" "$6"
 }
 
 update_pacman_static() {
     eval "${log_info}" || echo \
         'Trying to update pacman-static from archlinuxcn repo'
-    if touched_after_start cache/bin/pacman; then
+    if touched_after_start cache/bin/pacman-static; then
         eval "${log_info}" || echo \
             'Local pacman-static was already updated during this run,'\
             'no need to update'
         return
     fi
     repo_archlinuxcn
-    cache_repo_pkg_file "${repo_urls['archlinuxcn']}" archlinuxcn \
+    cache_repo_pkg_file "${repo_urls['archlinuxcn']}" '' archlinuxcn \
         "${arch_host}" pacman-static usr/bin/pacman-static
-    mkdir -p cache/bin
-    ln -sf "../pkg/${pkg_dir#cache/pkg/}/usr/bin/pacman-static" cache/bin/pacman
+}
+
+update_and_use_pacman_static() {
+    update_pacman_static
+    eval "pacman() { '${pkg_dir}/usr/bin/pacman-static' "\$@"; }"
 }
 
 prepare_pacman_conf() {
@@ -320,24 +323,24 @@ prepare_pacman_conf() {
         "Preparing pacman configs from ${distro_stylised} repo"\
         "at '${repo_url_base}'"
     if (( "${freeze_pacman_config}" )) && [[ 
-        -f cache/etc/pacman-strict.conf && 
-        -f cache/etc/pacman-loose.conf ]]
+        -f "${path_etc}/pacman-strict.conf" && 
+        -f "${path_etc}/pacman-loose.conf" ]]
     then
         eval "${log_info}" || echo \
             'Local pacman configs exist and --freeze-pacman was set'\
             'using existing configs'
         return
-    elif touched_after_start cache/etc/pacman-strict.conf &&
-        touched_after_start cache/etc/pacman-loose.conf
+    elif touched_after_start "${path_etc}/pacman-strict.conf" &&
+        touched_after_start "${path_etc}/pacman-loose.conf"
     then
         eval "${log_info}" || echo \
             'Local pacman configs were already updated during this run,'\
             'no need to update'
         return
     fi
-    cache_repo_pkg_file "${repo_url_base}" "${repo_core}" \
+    cache_repo_pkg_file "${repo_url_base}" "${distro_safe}:" "${repo_core}" \
         "${arch_target}" pacman etc/pacman.conf
-    mkdir -p cache/etc
+    mkdir -p "${path_etc}"
 
     local repo_base has_core=
     if (( "${#repos_base[@]}" )); then
@@ -394,13 +397,13 @@ prepare_pacman_conf() {
     )
     printf '%s\n%-13s= %s\n%s' \
         "${config_head}" 'SigLevel' 'Never' "${config_tail}" \
-        > cache/etc/pacman-loose.conf
+        > "${path_etc}/pacman-loose.conf"
     printf '%s\n%-13s= %s\n%s' \
         "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" \
-        > cache/etc/pacman-strict.conf
+        > "${path_etc}/pacman-strict.conf"
     eval "${log_info}" || echo \
-        "Generated loose config at 'cache/etc/pacman-loose.conf' and "\
-        "strict config at 'cache/etc/pacman-strict.conf'"
+        "Generated loose config at '${path_etc}/pacman-loose.conf' and "\
+        "strict config at '${path_etc}/pacman-strict.conf'"
 }
 
 # get_architecture() { #1
@@ -674,7 +677,7 @@ mirror_format() { #1 mirror url, #2 repo, #3 arch
 }
 
 configure_environment() {
-    export PATH="${PWD}/cache/bin:${PATH}" LANG=C
+    export LANG=C
     time_start_aimager=$(date +%s) || time_start_aimager=''
 }
 
@@ -740,7 +743,11 @@ configure_build() {
         build_id="${distro_safe}-${arch_target}-${board}-$(date +%Y%m%d%H%M%S)"
     fi
     eval "${log_info}" || echo "Build ID is '${build_id}'"
-    path_root=cache/root."${build_id}"
+    path_build=cache/build."${build_id}"
+    eval "${log_info}" || echo "Build folder is '${path_build}'"
+    path_etc="${path_build}/etc"
+    path_root="${path_build}/root"
+    mkdir -p "${path_build}"/{bin,etc,root}
     eval "${log_info}" || echo "Root mountpoint is '${path_root}'"
 }
 
@@ -749,11 +756,11 @@ configure_out() {
         out_prefix="out/${build_id}-"
         eval "${log_warn}" || echo \
             "Output prefix not set, generated as '${out_prefix}'"
-        if [[ "${out_prefix}" == */* ]]; then
-            eval "${log_info}" || echo \
-                "Output prefix contains folder, pre-creating it..."
-            mkdir -p "${out_prefix%/*}"
-        fi
+    fi
+    if [[ "${out_prefix}" == */* ]]; then
+        eval "${log_info}" || echo \
+            "Output prefix contains folder, pre-creating it..."
+        mkdir -p "${out_prefix%/*}"
     fi
     out_root_tar="${out_prefix}root.tar"
 }
@@ -782,7 +789,7 @@ check() {
 binfmt_check() {
     if [[ "${arch_target}" == loong64 ]]; then
         local arch_target=loongarch64
-    fi
+    fi 
     if [[ "${arch_host}" != "${arch_target}" ]]; then
         eval "${log_warn}" || echo \
             "Host architecture ${arch_host} !="\
@@ -985,7 +992,7 @@ child() {
         eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
         bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C "${path_root}"
     else
-        pacman -Sy --config cache/etc/pacman-loose.conf --noconfirm base
+        pacman -Sy --config "${path_etc}/pacman-loose.conf" --noconfirm base
     fi
     local overlay
     for overlay in "${overlays[@]}"; do
@@ -1006,7 +1013,7 @@ prepare_child_context() {
         declare -f
         echo 'script_name=child.sh'
         echo 'child'
-    } >  cache/child.sh
+    } >  "${path_build}/bin/child.sh"
 }
 
 run_child_and_wait_sync() {
@@ -1019,7 +1026,7 @@ run_child_and_wait_sync() {
         --map-users="${map_users}" \
         --map-groups="${map_groups}" \
         -- \
-        /bin/bash cache/child.sh
+        /bin/bash "${path_build}/bin/child.sh"
 }
 
 run_child_and_wait_async() {
@@ -1028,7 +1035,7 @@ run_child_and_wait_async() {
         'mapping manually using newuidmap and newgidmap'
     eval "${log_info}" || echo 'Spwaning child (async)...'
     unshare --user --pid --mount --fork \
-        /bin/bash cache/child.sh  &
+        /bin/bash "${path_build}/bin/child.sh"  &
     pid_child="$!"
     sleep 1
     newuidmap "${pid_child}" \
@@ -1069,7 +1076,7 @@ run_child_and_wait() {
 
 clean() {
     eval "${log_info}" || echo 'Cleaning up before exiting...'
-    rm -rf "${path_root}"
+    rm -rf "${path_build}"
 }
 
 work() {
@@ -1078,6 +1085,10 @@ work() {
         "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
+    if (( "${exit_after_child_prepared}" )); then
+        eval "${log_info}" || echo 'Early exiting after child prepared...'
+        return
+    fi
     identity_get_subids
     run_child_and_wait
     clean
@@ -1129,7 +1140,7 @@ help_aimager() {
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
-        'freeze-pacman-config' 'do not re-generate cache/etc/pacman-loose.conf and cache/etc/pacman-strict.conf from repo' \
+        'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
         'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping and package installation, only board-specific operation would be performed' \
     
@@ -1219,6 +1230,9 @@ aimager_cli() {
             shift
             ;;
         # Run-time behaviour options
+        '--exit-after-child-prepared')
+            exit_after_child_prepared=1
+            ;;
         '--freeze-pacman-config')
             freeze_pacman_config=1
             ;;
