@@ -87,7 +87,7 @@ aimager_init() {
     freeze_pacman_static=0
     tmpfs_root=''
     use_pacman_static=0
-    exit_before_child=0
+    before_spawn=0
     ## run target options
     run_binfmt_check=''
 }
@@ -1297,7 +1297,7 @@ work() {
         "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
-    if (( "${exit_before_child}" )); then
+    if (( "${before_spawn}" )); then
         eval "${log_info}" || echo 'Early exiting before spawning child ...'
         return
     fi
@@ -1321,32 +1321,33 @@ aimager() {
 help_aimager() {
     echo 'Usage:'
     echo "  $0 ([--option] ([option argument])) ..."
-    echo 'Currently under development, help message is hidden as it does not reflect the actual code'
-    return
     local formatter='    --%-25s %s\n'
 
     printf '\nArchitecture options:\n'
     printf -- "${formatter}" \
         'arch-host [arch]' 'host architecture; default: result of `uname -m`' \
         'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
+        'arch [arch]' 'alias to --arch-target' \
 
     printf '\nBuilt-in config options:\n' 
     printf -- "${formatter}" \
         'board [board]' 'board, setting "help" would print a list of supported boards; default: none' \
         'distro [distro]*' 'distro, required, setting "help" would print a list of supported distros' \
     
-    printf '\Image config options:\n'
+    printf '\nImage config options:\n'
     printf -- "${formatter}" \
         'build-id [build id]' 'a unique build id; default: [distro safe name]-[target architecture]-[board]-[yyyymmddhhmmss]' \
         'initrd-maker [maker]' 'initrd/initcpio/initramfs maker: mkinitcpio/booster' \
+        'install-pkg [pkg]' 'install the certain package after bootstrapping, can be specified multiple times'\
+        'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, can be specified multiple times'\
+        'out-prefix [prefix]' 'prefix to output archives and images, default: out/[build id]-'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
-        'pkg [pkg]' 'install the specified package into the target image, can be specified multiple times, default: base' \
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
         'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or +[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table +mbr_16g_root. pass +help or help to check the list of built-in common tables. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
 
-    printf '\Repo-definition options:\n'
+    printf '\nRepo-definition options:\n'
     printf -- "${formatter}" \
-        'repo-define-[name] [url]' 'define a new repo which could be referenced in later logics' \
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
 
@@ -1354,10 +1355,13 @@ help_aimager() {
     printf -- "${formatter}" \
         'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
-        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping and package installation, only board-specific operation would be performed' \
+        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping, only do package installation and later steps' \
+        'tmpfs-root [options]' 'mount a tmpfs to root, instead of bind-mounting, pass true or yes to use default mount options, otherwise pass the exact mount options like size=[size], etc' \
+        'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set then pacman-static would only be downloaded and used when we cannot find pacman'\
     
     printf '\nRun-target options:\n'
     printf -- "${formatter}" \
+        'before-spwan' 'early exit before spawning child, mainly for debugging' \
         'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
         'help' 'print this help message' \
 
@@ -1462,9 +1466,6 @@ aimager_cli() {
             shift
             ;;
         # Run-time behaviour options
-        '--exit-before-child')
-            exit_before_child=1
-            ;;
         '--freeze-pacman-config')
             freeze_pacman_config=1
             ;;
@@ -1489,6 +1490,9 @@ aimager_cli() {
         '--help')
             help_aimager
             return 0
+            ;;
+        '--before-spwan')
+            before_spawn=1
             ;;
         *)
             if ! eval "${log_error}"; then
