@@ -66,6 +66,7 @@ aimager_init() {
     board='none'
     build_id=''
     bootstrap_pkgs=()
+    clean_builds=0
     creates=()
     distro=''
     freeze_pacman_config=0
@@ -1336,6 +1337,11 @@ child_clean() {
 
 child() {
     child_wait
+    if (( "${clean_builds}" )); then
+        eval "${log_info}" || echo 'Cleaning builds...'
+        rm -rf cache/build.*
+        return
+    fi
     local signal
     for signal in INT TERM KILL; do
         trap "
@@ -1510,6 +1516,7 @@ help_aimager() {
     printf -- "${formatter}" \
         'before-spwan' 'early exit before spawning child, mainly for debugging' \
         'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
+        'clean-builds' 'clean builds and early quit'\
         'create [target]' 'create a certain target, artifact would be [out-prefix][target], can be specified multiple times, pass "help" to check for allowed to-be-created target, a built-in target root.tar would always be created whether you set it or not'\
         'help' 'print this help message' \
 
@@ -1753,6 +1760,9 @@ aimager_cli() {
         '--binfmt-check')
             run_binfmt_check=1
             ;;
+        '--clean-builds')
+            clean_builds=1
+            ;;
         '--create')
             case "$2" in
             'help')
@@ -1784,8 +1794,8 @@ aimager_cli() {
         esac
         shift
     done
+    aimager
 }
 
 aimager_init
 aimager_cli "$@"
-aimager
