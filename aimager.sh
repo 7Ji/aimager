@@ -85,7 +85,7 @@ aimager_init() {
     ## run-time behaviour
     freeze_pacman_config=0
     freeze_pacman_static=0
-    tmpfs_root=''
+    tmpfs_root_options=''
     use_pacman_static=0
     ## run target options
     run_binfmt_check=0
@@ -537,7 +537,7 @@ help_table() {
     local name prefix=table_common_ tables=()
     for name in $(declare -F); do
         if [[ "${name}" == "${prefix}"* && ${#name} -gt 13 ]]; then
-            tables+=("+${name:13}")
+            tables+=("=${name:13}")
         fi
     done
     eval "${log_info}" || echo "Available common tables: ${tables[@]}"
@@ -874,7 +874,7 @@ configure_table() {
             "Reading sfdisk-dump-like from '${table:1}'..."
         table=$(<"${table:1}")
         ;;
-    '+'*)
+    '='*)
         local table_func="${table:1}"
         eval "${log_info}" || echo "Using common table '${table_func}'" 
         local table_func="table_common_${table_func/-/_}"
@@ -1076,23 +1076,15 @@ child_wait() {
 }
 
 child_fs() {
+    eval "${log_info}" || echo 'Handling child rootfs...'
     rm -rf "${path_root}"
     mkdir "${path_root}"
-    case "${tmpfs_root}" in
-    '') : ;;
-    'yes'|'true')
-        eval "${log_info}" || echo \
-            "Using tmpfs for root '${path_root}', with default mount options"
-        mount -t tmpfs tmpfs-root "${path_root}"
-        ;;
-    *)
-        eval "${log_info}" || echo \
-            "Using tmpfs for root '${path_root}', options: '${tmpfs_root}'"
-        mount -t tmpfs -o "${tmpfs_root}" tmpfs-root "${path_root}"
-        ;;
-    esac
+    if [[ "${tmpfs_root_options}" ]]; then
+        mount -t tmpfs -o "${tmpfs_root_options}" tmpfs-root "${path_root}"
+    else
+        mount "${path_root}" "${path_root}" -o bind
+    fi
     mkdir -p "${path_root}"/{boot,dev,etc/pacman.d,proc,run,sys,tmp,var/{cache/pacman/pkg,lib/pacman,log}}
-    mount "${path_root}" "${path_root}" -o bind
     mount tmpfs-dev "${path_root}"/dev -t tmpfs -o mode=0755,nosuid
     mount tmpfs-sys "${path_root}"/sys -t tmpfs -o mode=0755,nosuid
     mkdir -p "${path_root}"/{dev/{shm,pts},sys/module}
@@ -1114,6 +1106,12 @@ child_fs() {
     ln -s /proc/self/fd "${path_root}"/dev/fd
     ln -s pts/ptmx "${path_root}"/dev/ptmx
     ln -s $(readlink -f /dev/stdout) "${path_root}"/dev/console
+    if ! eval "${log_debug}"; then
+        echo 'Child rootfs mountinfo is as follows:'
+        local prefix_mount=$(readlink -f "${path_root}")
+        grep '^\([0-9]\+ \)\{2\}[0-9]\+:[0-9]\+ [^ ]\+ '"${prefix_mount}" \
+            /proc/self/mountinfo
+    fi
 }
 
 child_check_binfmt() {
@@ -1204,7 +1202,7 @@ child_clean() {
     eval "${log_info}" || echo 'Child cleaning...'
     eval "${log_info}" || echo 'Killing child gpg-agent...'
     chroot "${path_root}" pkill -SIGINT --echo '^gpg-agent$' || true
-    if [[ "${tmpfs_root}" ]]; then
+    if [[ "${tmpfs_root_options}" ]]; then
         eval "${log_info}" || echo 'Using tmpfs, skipped cleaning'
         return
     fi
@@ -1216,8 +1214,18 @@ child_clean() {
     rm -rf "${path_root}"
 }
 
+child_signal() {
+    trap \
+        'eval "${log_warn}" || echo "SIGINT received, bad exiting"; exit 1' \
+        INT
+    trap \
+        'eval "${log_warn}" || echo "SIGTERM received, bad exiting"; exit 1' \
+        TERM
+}
+
 child() {
     child_wait
+    child_signal
     child_fs
     child_init
     child_setup
@@ -1331,41 +1339,41 @@ help_aimager() {
     echo "  $0 ([--option] ([option argument])) ..."
     local formatter='    --%-25s %s\n'
 
-    printf '\nArchitecture options:\n'
+    printf '\nHost options:\n'
     printf -- "${formatter}" \
         'arch-host [arch]' 'host architecture; default: result of `uname -m`' \
+    
+    printf '\nImage overall options:\n'
+    printf -- "${formatter}" \
         'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
         'arch [arch]' 'alias to --arch-target' \
-
-    printf '\nBuilt-in config options:\n' 
-    printf -- "${formatter}" \
-        'board [board]' 'board, setting "help" would print a list of supported boards; default: none' \
-        'distro [distro]*' 'distro, required, setting "help" would print a list of supported distros' \
-    
-    printf '\nImage config options:\n'
-    printf -- "${formatter}" \
+        'board [board]' 'board, would call corresponding built-in board definition to define other options, pass "help" to get the list of supported boards, pass "help=[board]" to get the board definition; default: none' \
         'build-id [build id]' 'a unique build id; default: [distro safe name]-[target architecture]-[board]-[yyyymmddhhmmss]' \
-        'initrd-maker [maker]' 'initrd/initcpio/initramfs maker: mkinitcpio/booster' \
-        'install-pkg [pkg]' 'install the certain package after bootstrapping, can be specified multiple times'\
-        'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, can be specified multiple times'\
+        'distro [distro]*' 'distro, required, passing "help" to get the list of supported distros, pass "help=[distro]" to get the distro definition' \
         'out-prefix [prefix]' 'prefix to output archives and images, default: out/[build id]-'\
-        'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
-        'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package; default: core' \
-        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
-        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or +[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table +mbr_16g_root. pass +help or help to check the list of built-in common tables. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
 
-    printf '\nRepo-definition options:\n'
+    printf '\nBootstrapping options:\n'
     printf -- "${formatter}" \
+        'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package to prepare pacman-strict.conf and pacman-loose.conf; default: core' \
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
+        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping, only do package installation and later steps' \
+
+    printf '\nSetup options:\n'
+    printf -- "${formatter}" \
+        'initrd-maker [maker]' 'initrd/initcpio/initramfs maker: mkinitcpio/booster' \
+        'install-pkg [pkg]' 'install the certain package after bootstrapping, can be specified multiple times, you should NOT install keyring packages here'\
+        'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
+        'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
+        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
         'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
-        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping, only do package installation and later steps' \
-        'tmpfs-root [options]' 'mount a tmpfs to root, instead of bind-mounting, pass true or yes to use default mount options, otherwise pass the exact mount options like size=[size], etc' \
-        'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set then pacman-static would only be downloaded and used when we cannot find pacman'\
+        'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
+        'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set (default) then pacman-static would only be downloaded and used when we cannot find pacman'\
     
     printf '\nRun-target options:\n'
     printf -- "${formatter}" \
@@ -1394,37 +1402,78 @@ aimager_cli() {
     local install_pkgs_new=()
     while (( $# > 0 )); do
         case "$1" in
-        # Architecture options
+        # Host options
         '--arch-host')
             arch_host="$2"
             shift
             ;;
+        # Image overall options
         '--arch-target'|'--arch')
             arch_target="$2"
             shift
             ;;
-        # Built-in config options
         '--board')
-            if [[ "$2" == 'help' ]]; then
+            case "$2" in
+            'help')
                 help_board
                 return
-            fi
-            board="$2"
-            shift
-            ;;
-        '--distro')
-            if [[ "$2" == 'help' ]]; then
-                help_distro
+                ;;
+            'help='*)
+                help_board
+                declare -fp "board_${2:5}"
                 return
-            fi
-            distro="$2"
-            shift
+                ;;
+            *)
+                board="$2"
+                shift
+            esac
             ;;
-        # Image config options
         '--build-id')
             build_id="$2"
             shift
             ;;
+        '--distro')
+            case "$2" in
+            'help')
+                help_distro
+                return
+                ;;
+            'help='*)
+                help_distro
+                declare -fp "distro_${2:5}"
+                return
+                ;;
+            *)
+                distro="$2"
+                shift
+            esac
+            ;;
+        '--out-prefix')
+            out_prefix="$2"
+            shift
+            ;;
+        # Boostrapping options
+        '--repo-core')
+            repo_core="$2"
+            shift
+            ;;
+        '--repo-url-parent')
+            repo_url_parent="$2"
+            shift
+            ;;
+        '--repo-url-'*)
+            repo_urls["${1:11}"]="$2"
+            shift
+            ;;
+        '--repos-base')
+            IFS=', ' read -r -a repos_base <<< "$2"
+            shift
+            ;;
+        '--reuse-root-tar')
+            reuse_root_tar="$2"
+            shift
+            ;;
+        # Setup options
         '--inird-maker')
             initrd_maker="$2"
             shift
@@ -1438,69 +1487,44 @@ aimager_cli() {
             install_pkgs+=("${install_pkgs_new[@]}")
             shift
             ;;
-        '--out-prefix')
-            out_prefix="$2"
-            shift
-            ;;
         '--overlay')
             overlays+=("$2")
             shift
             ;;
-        '--repo-core')
-            repo_core="$2"
-            shift
-            ;;
-        '--repos-base')
-            IFS=', ' read -r -a repos_base <<< "$2"
-            shift
-            ;;
         '--table')
-            case "$2" in
-            'help'|'+help')
+            if [[ "$2" == 'help' ]]; then
                 help_table
                 return
-                ;;
-            esac
+            fi
             table="$2"
             shift
             ;;
-        # Repo-definition options
-        '--repo-url-parent')
-            repo_url_parent="$2"
-            shift
-            ;;
-        '--repo-url-'*)
-            repo_urls["${1:11}"]="$2"
-            shift
-            ;;
-        # Run-time behaviour options
+        # Builder behaviour options
         '--freeze-pacman-config')
             freeze_pacman_config=1
             ;;
         '--freeze-pacman-static')
             freeze_pacman_static=1
             ;;
-        '--reuse-root-tar')
-            reuse_root_tar="$2"
-            shift
-            ;;
         '--tmpfs-root')
-            tmpfs_root="$2"
-            shift
+            tmpfs_root_options='defaults'
+            ;;
+        '--tmpfs-root='*)
+            tmpfs_root_options="${2:13}"
             ;;
         '--use-pacman-static')
             use_pacman_static=1
             ;;
         # Run-target options
+        '--before-spwan')
+            run_before_spawn=1
+            ;;
         '--binfmt-check')
             run_binfmt_check=1
             ;;
         '--help')
             help_aimager
             return 0
-            ;;
-        '--before-spwan')
-            run_before_spawn=1
             ;;
         *)
             if ! eval "${log_error}"; then
