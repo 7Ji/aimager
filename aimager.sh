@@ -76,6 +76,7 @@ aimager_init() {
     repo_keyrings=()
     repo_url_parent=''
     declare -gA repo_urls
+    repos_add=()
     repos_base=()
     reuse_root_tar=''
     run_binfmt_check=0
@@ -304,7 +305,7 @@ update_pacman_static() {
             'no need to update'
         return
     fi
-    repo_archlinuxcn
+    repo_archlinuxcn_no_keyring
     cache_repo_pkg_file "${repo_urls['archlinuxcn']}" '' archlinuxcn \
         "${arch_host}" pacman-static usr/bin/pacman-static
 }
@@ -390,6 +391,10 @@ prepare_pacman_conf() {
     )
     local config_tail=$(
         printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}"
+        local repo
+        for repo in "${repos_add[@]}"; do
+            printf '[%s]\nServer = %s\n' "${repo}" "${repo_urls["${repo}"]}"
+        done
     )
     printf '%s\n%-13s= %s\n%s' \
         "${config_head}" 'SigLevel' 'Never' "${config_tail}" \
@@ -633,8 +638,7 @@ repo_arch4edu() {
     repo_keyrings+=('arch4edu-keyring')
 }
 
-# https://www.archlinuxcn.org/archlinux-cn-repo-and-mirror/
-repo_archlinuxcn() {
+repo_archlinuxcn_no_keyring() {
     if [[ -z "${repo_urls['archlinuxcn']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['archlinuxcn']="${repo_url_parent}/archlinuxcn/"'$arch'
@@ -642,7 +646,23 @@ repo_archlinuxcn() {
             repo_urls['archlinuxcn']='https://repo.archlinuxcn.org/$arch'
         fi
     fi
+}
+
+# https://www.archlinuxcn.org/archlinux-cn-repo-and-mirror/
+repo_archlinuxcn() {
+    repo_archlinuxcn_no_keyring
     repo_keyrings+=('archlinuxcn-keyring')
+}
+
+help_repo() {
+    local name prefix=repo_ repos=()
+    for name in $(declare -F); do
+        if [[ "${name}" == "${prefix}"* && ${#name} -gt 5 ]]; then
+            repos+=("${name:5}")
+        fi
+    done
+    eval "${log_info}" || echo "Available repos: ${repos[@]}"
+    return
 }
 
 require_arch_target() {
@@ -814,9 +834,17 @@ configure_distro() {
     esac
 }
 
+configure_repo() {
+    local repo
+    for repo in "${repos_add[@]}"; do
+        "repo_${repo}"
+    done
+}
+
 configure_persistent() {
     configure_board
     configure_distro
+    configure_repo
 }
 
 configure_architecture() {
@@ -1135,8 +1163,9 @@ child_init_keyring() {
     mkdir -p cache/keyring
     eval "${log_info}" || echo \
         "Creating keyring backup archive '${keyring_archive}'..."
-    bsdtar --acls --xattrs -cpf "${keyring_archive}" -C "${path_keyring}" \
+    bsdtar --acls --xattrs -cpf "${keyring_archive}.temp" -C "${path_keyring}" \
         --exclude ./S.\* .
+    mv "${keyring_archive}"{.temp,}
 }
 
 child_init_bootstrap() {
@@ -1356,6 +1385,7 @@ help_aimager() {
 
     printf '\nBootstrapping options:\n'
     printf -- "${formatter}" \
+        'repo-add [repo]' 'add an addtional repo, usually third party, pass help to get the list of built-in third party repos, pass help=[repo] to get the repo definition'\
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package to prepare pacman-strict.conf and pacman-loose.conf; default: core' \
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
@@ -1456,6 +1486,23 @@ aimager_cli() {
             shift
             ;;
         # Boostrapping options
+        '--repo-add')
+            case "$2" in
+            'help')
+                help_repo
+                return
+                ;;
+            'help='*)
+                help_repo
+                declare -fp "repo_${2:5}"
+                return
+                ;;
+            *)
+                repos_add+=("$2")
+                shift
+                ;;
+            esac
+            ;;
         '--repo-core')
             repo_core="$2"
             shift
