@@ -1784,8 +1784,8 @@ aimager_cli() {
         esac
         shift
     done
-    aimager
 }
 
 aimager_init
 aimager_cli "$@"
+aimager
