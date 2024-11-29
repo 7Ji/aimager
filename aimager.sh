@@ -551,7 +551,7 @@ board_x64_uefi() {
     if [[ -z "${table:-}" ]]; then
         table='+gpt_1g_esp_16g_root_x86_64'
     fi
-    install_pkgs+=('linux'{,'-lts','-zen'})
+    install_pkgs+=('linux')
 }
 
 board_x86_legacy() {
@@ -580,10 +580,7 @@ board_orangepi_5_family() {
     if [[ -z "${table:-}" ]]; then
         table='+gpt_1g_esp_16g_root_aarch64'
     fi
-    install_pkgs+=(
-        'linux-aarch64-rockchip-joshua-git'
-        'linux-aarch64-rockchip-rk3588-bsp5.10-orangepi-git'
-    )
+    install_pkgs+=('linux-aarch64-rockchip-joshua-git')
 }
 
 board_orangepi_5() {
@@ -614,7 +611,7 @@ help_board() {
 }
 
 pacman_conf_append_repo_with_mirrorlist() { #1 repo, 2 mirrorlist name
-    printf '[%s]\nInclude = /etc/pacman.d/mirrorlist-%s\n' "$1" "$2"
+    printf '\n[%s]\nInclude = /etc/pacman.d/%s\n' "$1" "$2"
 }
 
 # All third-party repo definitions, in alphabetical order
@@ -622,14 +619,16 @@ pacman_conf_append_repo_with_mirrorlist() { #1 repo, 2 mirrorlist name
 # https://github.com/7Ji/archrepo/
 repo_7Ji() {
     require_arch_target 'Repo 7Ji' aarch64 x86_64
+    local url_public='https://github.com/$repo/archrepo/releases/download/$arch'
     if [[ -z "${repo_urls['7Ji']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['7Ji']="${repo_url_parent}"'/$repo/$arch'
         else
-            repo_urls['7Ji']='https://github.com/$repo/archrepo/releases/download/$arch'
+            repo_urls['7Ji']="${url_public}"
         fi
     fi
     bootstrap_pkgs+=('7ji-keyring')
+    pacman_conf_append+=$(printf '\n[%s]\nServer = %s\n' 7Ji "${url_public}")
 }
 
 # https://arch4edu.org/
@@ -665,7 +664,7 @@ repo_archlinuxcn() {
     bootstrap_pkgs+=('archlinuxcn-keyring')
     install_pkgs+=('archlinuxcn-mirrorlist-git')
     pacman_conf_append+=$(pacman_conf_append_repo_with_mirrorlist \
-        'archlinuxcn' 'mirrorlist-archlinuxcn')
+        'archlinuxcn' 'archlinuxcn-mirrorlist')
 }
 
 help_repo() {
@@ -694,6 +693,7 @@ require_arch_target() { #1: who
 
 distro_common() {
     repo_core="${repo_core:-core}"
+    bootstrap_pkgs+=('base')
 }
 
 distro_archlinux() {
@@ -935,7 +935,31 @@ configure_table() {
     fi
 }
 
+configure_initrd_maker() {
+    initrd_maker="${initrd_maker:-booster}"
+}
+
+configure_pkgs() {
+    local pkgs_allowed=()
+    local pkg
+    for pkg in "${install_pkgs[@]}"; do
+        case "${pkg}" in
+        'booster'|'mkinitcpio'|'dracut')
+            eval "${log_warn}" || echo \
+                "Removed '${pkg}' from install-pkg list: initrd-maker can only"\
+                'be installed via --initrd-maker'
+            ;;
+        *)
+            pkgs_allowed+=("${pkg}")
+            ;;
+        esac
+    done
+    install_pkgs=("${pkgs_allowed[@]}")
+}
+
 configure_dynamic() {
+    configure_initrd_maker
+    configure_pkgs
     configure_architecture
     configure_build
     configure_out
@@ -1205,7 +1229,7 @@ child_init_bootstrap() {
             "bootstrap packages. It is recommended to rebuild after this try!"
         config="${path_etc}/pacman-loose.conf"
     fi
-    pacman -Sy --config "${config}" --noconfirm base "${bootstrap_pkgs[@]}"
+    pacman -Sy --config "${config}" --noconfirm "${bootstrap_pkgs[@]}"
     child_check_binfmt
     child_init_keyring
 }
@@ -1218,16 +1242,63 @@ child_init() {
     fi
 }
 
+child_initrd_set_universal_booster() {
+    echo 'universal: true' > "${path_root}/etc/booster.yaml"
+}
+
+child_initrd_set_universal_mkinitcpio() {
+    eval "${log_fatal}" || echo 'Not implemented yet'
+    return 1
+}
+
+child_initrd_set_universal_dracut() {
+    eval "${log_fatal}" || echo 'Not implemented yet'
+    return 1
+}
+
+child_setup_initrd_maker() {
+    eval "${log_info}" || echo \
+        'Checking if we need to install and hack initrd maker...'
+    if pacman -T --config "${path_etc}/pacman-strict.conf" initramfs \
+        > /dev/null
+    then
+        return
+    fi
+    eval "${log_info}" || echo "Installing initrd maker ${initrd_maker}..."
+    pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
+        "${initrd_maker}"
+    case "${initrd_maker}" in
+    'booster'|'')
+        child_initrd_set_universal_booster
+        ;;
+    'mkinitcpio')
+        child_initrd_set_universal_mkinitcpio
+        ;;
+    'dracut')
+        child_initrd_set_universal_dracut
+        ;;
+    *)
+        eval "${log_error}" || echo \
+            "Unknown initrd maker ${initrd_maker}, it could only be one of the"\
+            'following: booster, mkinitcpio, dracut'
+        ;;
+    esac
+}
+
 child_setup() {
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
     done
+    child_setup_initrd_maker
     if (( "${#install_pkgs[@]}" )); then
         eval "${log_info}" || echo \
             "Installing the following packages: ${install_pkgs[*]}"
-        pacman -Su --config "${path_etc}/pacman-strict.conf" --noconfirm \
+        pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
             --needed "${install_pkgs[@]}"
+    fi
+    if [[ "${pacman_conf_append}" ]]; then
+        echo "${pacman_conf_append}" >> "${path_root}/etc/pacman.conf"
     fi
 }
 
@@ -1414,8 +1485,8 @@ help_aimager() {
 
     printf '\nSetup options:\n'
     printf -- "${formatter}" \
-        'initrd-maker [maker]' 'initrd/initcpio/initramfs maker: mkinitcpio/booster' \
-        'install-pkg [pkg]' 'install the certain package after bootstrapping, can be specified multiple times, you should NOT install keyring packages here'\
+        'initrd-maker [maker]' 'initrd maker: booster(default)/mkinitcpio/dracut, initrd-maker is installed before all other packages after bootstrapping so aimager could config it to only build universal images, and it would only be installed if initramfs virtual package has no provider, that is, if you use --reuse-root to do incremental build then in most cases later --initrd-maker has no use. ' \
+        'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
@@ -1549,7 +1620,7 @@ aimager_cli() {
             shift
             ;;
         # Setup options
-        '--inird-maker')
+        '--initrd-maker')
             initrd_maker="$2"
             shift
             ;;
