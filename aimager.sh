@@ -66,6 +66,7 @@ aimager_init() {
     board='none'
     build_id=''
     bootstrap_pkgs=()
+    creates=()
     distro=''
     freeze_pacman_config=0
     freeze_pacman_static=0
@@ -1309,6 +1310,12 @@ child_out() {
         --exclude ./etc/pacman.d/gnupg/S.\* \
         .
     mv "${out_root_tar}"{.temp,}
+    local create
+    for create in "${creates[@]}"; do
+        create="${create/-/_}"
+        create="${create/./_}"
+        "create_${create}"
+    done
 }
 
 child_clean() {
@@ -1498,13 +1505,64 @@ help_aimager() {
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
         'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
         'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set (default) then pacman-static would only be downloaded and used when we cannot find pacman'\
-    
+
     printf '\nRun-target options:\n'
     printf -- "${formatter}" \
         'before-spwan' 'early exit before spawning child, mainly for debugging' \
         'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
+        'create [target]' 'create a certain target, artifact would be [out-prefix][target], can be specified multiple times, pass "help" to check for allowed to-be-created target, a built-in target root.tar would always be created whether you set it or not'\
         'help' 'print this help message' \
 
+}
+
+create_part_root_img() {
+    if ! local part_info=$(grep '^name=[^,]*[rR][oO][oO][tT],' <<< "${table}");
+    then
+        eval "${log_error}" || echo \
+            'Partition table does not contain root partition:'
+        echo "${table}"
+        return 1
+    fi
+    eval "${log_info}" || echo 'Creating part-root.img...'
+}
+
+create_part_boot_img() {
+    if ! local part_info=$(grep '^name=[^,]*[bB][oO][oO][tT],' <<< "${table}");
+    then
+        eval "${log_error}" || echo \
+            'Partition table does not contain boot partition:'
+        echo "${table}"
+        return 1
+    fi
+    eval "${log_info}" || echo 'Creating part-boot.img...'
+}
+
+create_part_home_img() {
+    if ! local part_info=$(grep '^name=[^,]*[hH][oO][mM][eE],' <<< "${table}");
+    then
+        eval "${log_error}" || echo \
+            'Partition table does not contain home partition:'
+        echo "${table}"
+        return 1
+    fi
+    eval "${log_info}" || echo 'Creating part-home.img...'
+}
+
+create_disk_img() {
+    :
+}
+
+help_create() {
+    local name prefix=create_ creates=()
+    for name in $(declare -F); do
+        if [[ "${name}" == "${prefix}"* && ${#name} -gt 7 ]]; then
+            creates+=("${name:7}")
+        fi
+    done
+    eval "${log_info}" || echo \
+        "Available to-be-created targets (_ can be written as either - or .):"\
+        "${creates[*]}"
+    return
 }
 
 report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining args
@@ -1679,6 +1737,23 @@ aimager_cli() {
             ;;
         '--binfmt-check')
             run_binfmt_check=1
+            ;;
+        '--create')
+            case "$2" in
+            'help')
+                help_create
+                return
+                ;;
+            'help='*)
+                help_create
+                declare -fp "create_${2:5}"
+                return
+                ;;
+            *)
+                creates+=("$2")
+                shift
+                ;;
+            esac
             ;;
         '--help')
             help_aimager
