@@ -550,7 +550,7 @@ board_x64_uefi() {
     arch_target='x86_64'
     bootloader='systemd-boot'
     if [[ -z "${table:-}" ]]; then
-        table='+gpt_1g_esp_16g_root_x86_64'
+        table='=gpt_1g_esp_16g_root_x86_64'
     fi
     install_pkgs+=('linux')
 }
@@ -560,7 +560,7 @@ board_x86_legacy() {
     arch_target='i686'
     bootloader='syslinux'
     if [[ -z "${table:-}" ]]; then
-        table='+mbr_16g_root'
+        table='=mbr_16g_root'
     fi
     install_pkgs+=('linux')
 }
@@ -570,7 +570,7 @@ board_amlogic_s9xxx() {
     arch_target='aarch64'
     bootloader='u-boot'
     if [[ -z "${table:-}" ]]; then
-        table='+mbr_1g_esp_16g_root_aarch64'
+        table='=mbr_1g_esp_16g_root_aarch64'
     fi
 }
 
@@ -579,7 +579,7 @@ board_orangepi_5_family() {
     arch_target='aarch64'
     bootloader='u-boot'
     if [[ -z "${table:-}" ]]; then
-        table='+gpt_1g_esp_16g_root_aarch64'
+        table='=gpt_1g_esp_16g_root_aarch64'
     fi
     install_pkgs+=('linux-aarch64-rockchip-joshua-git')
 }
@@ -1516,8 +1516,13 @@ help_aimager() {
 }
 
 create_part_root_img() {
-    if ! local part_info=$(grep '^name=[^,]*[rR][oO][oO][tT],' <<< "${table}");
+    local part_info
+    if part_info=$(grep '^name=[^,]*[rR][oO][oO][tT],' <<< "${table}");
     then
+        eval "${log_info}" || echo \
+            "Creating part-root.img according to the following partition info:"\
+            "${part_info}"
+    else
         eval "${log_error}" || echo \
             'Partition table does not contain root partition:'
         echo "${table}"
@@ -1527,8 +1532,13 @@ create_part_root_img() {
 }
 
 create_part_boot_img() {
-    if ! local part_info=$(grep '^name=[^,]*[bB][oO][oO][tT],' <<< "${table}");
+    local part_info
+    if part_info=$(grep '^name=[^,]*[bB][oO][oO][tT],' <<< "${table}");
     then
+        eval "${log_info}" || echo \
+            "Creating part-boot.img according to the following partition info:"\
+            "${part_info}"
+    else
         eval "${log_error}" || echo \
             'Partition table does not contain boot partition:'
         echo "${table}"
@@ -1538,8 +1548,13 @@ create_part_boot_img() {
 }
 
 create_part_home_img() {
-    if ! local part_info=$(grep '^name=[^,]*[hH][oO][mM][eE],' <<< "${table}");
+    local part_info
+    if part_info=$(grep '^name=[^,]*[hH][oO][mM][eE],' <<< "${table}");
     then
+        eval "${log_info}" || echo \
+            "Creating part-home.img according to the following partition info:"\
+            "${part_info}"
+    else
         eval "${log_error}" || echo \
             'Partition table does not contain home partition:'
         echo "${table}"
