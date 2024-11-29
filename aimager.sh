@@ -1247,8 +1247,8 @@ child_initrd_set_universal_booster() {
 }
 
 child_initrd_set_universal_mkinitcpio() {
-    eval "${log_fatal}" || echo 'Not implemented yet'
-    return 1
+    sed -i "s/^PRESETS=.\+/PRESETS=('fallback')/" \
+        "${path_root}/usr/share/mkinitcpio/hook.preset"
 }
 
 child_initrd_set_universal_dracut() {
