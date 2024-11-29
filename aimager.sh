@@ -60,37 +60,30 @@ aimager_init() {
         ;;
     esac
     # variables
-    ## global decorator
-    script_name=aimager.sh
-    ## architecture
     arch_host=$(uname -m)
     arch_target="${arch_host}"
-    ## built-in config options
+    async_child=0
     board='none'
-    distro=''
-    ## caller-defined config options
     build_id=''
+    distro=''
+    freeze_pacman_config=0
+    freeze_pacman_static=0
     initrd_maker=''
     install_pkgs=()
     out_prefix=''
     overlays=()
     repo_core=''
-    repos_base=()
-    table=''
-    ## repo definition option
     repo_keyrings=()
     repo_url_parent=''
     declare -gA repo_urls
+    repos_base=()
     reuse_root_tar=''
-    ## run-time behaviour
-    async_child=0
-    freeze_pacman_config=0
-    freeze_pacman_static=0
-    tmpfs_root_options=''
-    use_pacman_static=0
-    ## run target options
     run_binfmt_check=0
     run_before_spawn=0
+    script_name=aimager.sh
+    table=''
+    tmpfs_root_options=''
+    use_pacman_static=0
 }
 
 # check if an executable exists
@@ -1218,7 +1211,7 @@ child_clean() {
 child() {
     child_wait
     local signal
-    for signal in INT TERM; do
+    for signal in INT TERM KILL; do
         trap "
             echo '[child.sh:WARN] SIG${signal} received, bad exiting'
             exit 1" "${signal}"
@@ -1226,6 +1219,7 @@ child() {
     child_fs
     child_init
     child_setup
+    trap - INT TERM KILL
     child_out
     child_clean
     eval "${log_info}" || echo 'Child exiting!!'
@@ -1259,17 +1253,14 @@ run_child_and_wait_async() {
         'System unshare does not support --map-users and --map-groups,'\
         'mapping manually using newuidmap and newgidmap'
     eval "${log_info}" || echo 'Spwaning child (async)...'
-    unshare --user --pid --mount --fork \
+    unshare --user --pid --mount --fork --kill-child=SIGTERM \
         /bin/bash "${path_build}/bin/child.sh"  &
     pid_child="$!"
     local signal
     for signal in INT TERM EXIT; do
         trap "
-            echo '[child.sh:WARN] SIG${signal} received, killing ${pid_child}' 
-            kill -s SIGINT '${pid_child}' || true
-            wait '${pid_child}'
-            kill -s SIGTERM '${pid_child}' || true
-            exit 1
+            echo '[aimager.sh:WARN] SIG${signal} received, killing ${pid_child}'
+            kill -s SIGKILL '${pid_child}'
         " "${signal}"
     done
     sleep 1
