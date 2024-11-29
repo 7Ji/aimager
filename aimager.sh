@@ -65,6 +65,7 @@ aimager_init() {
     async_child=0
     board='none'
     build_id=''
+    bootstrap_pkgs=()
     distro=''
     freeze_pacman_config=0
     freeze_pacman_static=0
@@ -72,11 +73,11 @@ aimager_init() {
     install_pkgs=()
     out_prefix=''
     overlays=()
+    pacman_conf_append=''
     repo_core=''
-    repo_keyrings=()
     repo_url_parent=''
     declare -gA repo_urls
-    repos_add=()
+    add_repos=()
     repos_base=()
     reuse_root_tar=''
     run_binfmt_check=0
@@ -305,7 +306,7 @@ update_pacman_static() {
             'no need to update'
         return
     fi
-    repo_archlinuxcn_no_keyring
+    repo_archlinuxcn_url_only
     cache_repo_pkg_file "${repo_urls['archlinuxcn']}" '' archlinuxcn \
         "${arch_host}" pacman-static usr/bin/pacman-static
 }
@@ -392,7 +393,7 @@ prepare_pacman_conf() {
     local config_tail=$(
         printf '[%s]\nServer = '"${repo_url_base}"'\n' "${repos_base[@]}"
         local repo
-        for repo in "${repos_add[@]}"; do
+        for repo in "${add_repos[@]}"; do
             printf '[%s]\nServer = %s\n' "${repo}" "${repo_urls["${repo}"]}"
         done
     )
@@ -550,6 +551,7 @@ board_x64_uefi() {
     if [[ -z "${table:-}" ]]; then
         table='+gpt_1g_esp_16g_root_x86_64'
     fi
+    install_pkgs+=('linux'{,'-lts','-zen'})
 }
 
 board_x86_legacy() {
@@ -559,6 +561,7 @@ board_x86_legacy() {
     if [[ -z "${table:-}" ]]; then
         table='+mbr_16g_root'
     fi
+    install_pkgs+=('linux')
 }
 
 board_amlogic_s9xxx() {
@@ -577,6 +580,10 @@ board_orangepi_5_family() {
     if [[ -z "${table:-}" ]]; then
         table='+gpt_1g_esp_16g_root_aarch64'
     fi
+    install_pkgs+=(
+        'linux-aarch64-rockchip-joshua-git'
+        'linux-aarch64-rockchip-rk3588-bsp5.10-orangepi-git'
+    )
 }
 
 board_orangepi_5() {
@@ -606,16 +613,15 @@ help_board() {
     return
 }
 
+pacman_conf_append_repo_with_mirrorlist() { #1 repo, 2 mirrorlist name
+    printf '[%s]\nInclude = /etc/pacman.d/mirrorlist-%s\n' "$1" "$2"
+}
+
 # All third-party repo definitions, in alphabetical order
-# Unlike distros, we do not enforce architecture detection in third-party repos,
-# as:
-#  1. These repo might be used for host (like archlinuxcn for pacman-static), 
-# checking target architecure is no good
-#  2. It would be very easy to add a new architecture support to a thrid-party 
-# repo, unlike to a distro
 
 # https://github.com/7Ji/archrepo/
 repo_7Ji() {
+    require_arch_target 'Repo 7Ji' aarch64 x86_64
     if [[ -z "${repo_urls['7Ji']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['7Ji']="${repo_url_parent}"'/$repo/$arch'
@@ -623,25 +629,29 @@ repo_7Ji() {
             repo_urls['7Ji']='https://github.com/$repo/archrepo/releases/download/$arch'
         fi
     fi
-    repo_keyrings+=('7ji-keyring')
+    bootstrap_pkgs+=('7ji-keyring')
 }
 
 # https://arch4edu.org/
 repo_arch4edu() {
+    require_arch_target 'Repo arch4edu' aarch64 x86_64
     if [[ -z "${repo_urls['arch4edu']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_urls['arch4edu']="${repo_url_parent}"'$repo/$arch'
+            repo_urls['arch4edu']="${repo_url_parent}"'/$repo/$arch'
         else
             repo_urls['arch4edu']='https://repository.arch4edu.org/$arch'
         fi
     fi
-    repo_keyrings+=('arch4edu-keyring')
+    bootstrap_pkgs+=('arch4edu-keyring')
+    install_pkgs+=('mirrorlist.arch4edu')
+    pacman_conf_append+=$(pacman_conf_append_repo_with_mirrorlist \
+        'arch4edu' 'mirrorlist.arch4edu')
 }
 
-repo_archlinuxcn_no_keyring() {
+repo_archlinuxcn_url_only() {
     if [[ -z "${repo_urls['archlinuxcn']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
-            repo_urls['archlinuxcn']="${repo_url_parent}/archlinuxcn/"'$arch'
+            repo_urls['archlinuxcn']="${repo_url_parent}"'/$repo/$arch'
         else
             repo_urls['archlinuxcn']='https://repo.archlinuxcn.org/$arch'
         fi
@@ -650,8 +660,12 @@ repo_archlinuxcn_no_keyring() {
 
 # https://www.archlinuxcn.org/archlinux-cn-repo-and-mirror/
 repo_archlinuxcn() {
-    repo_archlinuxcn_no_keyring
-    repo_keyrings+=('archlinuxcn-keyring')
+    require_arch_target 'Repo archlinuxcn' aarch64 x86_64
+    repo_archlinuxcn_url_only
+    bootstrap_pkgs+=('archlinuxcn-keyring')
+    install_pkgs+=('archlinuxcn-mirrorlist-git')
+    pacman_conf_append+=$(pacman_conf_append_repo_with_mirrorlist \
+        'archlinuxcn' 'mirrorlist-archlinuxcn')
 }
 
 help_repo() {
@@ -665,15 +679,15 @@ help_repo() {
     return
 }
 
-require_arch_target() {
+require_arch_target() { #1: who
     local architecture
-    for architecture in "$@"; do
+    for architecture in "${@:2}"; do
         if [[ "${arch_target}" == "${architecture}" ]]; then
             return
         fi
     done
     eval "${log_error}" || echo \
-        "${distro_stylised} requires target architecture to be one of $*,"\
+        "1 requires target architecture to be one of ${*:2},"\
         "but it is ${arch_target}"
     return 1
 }
@@ -685,7 +699,7 @@ distro_common() {
 distro_archlinux() {
     distro_stylised='Arch Linux'
     distro_safe='archlinux'
-    require_arch_target x86_64
+    require_arch_target "${distro_stylised}" x86_64
     distro_common
     if [[ -z "${repo_urls['archlinux']:-}" ]]; then
         local mirror_arch_suffix='$repo/os/$arch'
@@ -701,7 +715,7 @@ distro_archlinux() {
 distro_archlinux32() {
     distro_stylised='Arch Linux 32'
     distro_safe='archlinux32'
-    require_arch_target i486 pentium4 i686
+    require_arch_target "${distro_stylised}" i486 pentium4 i686
     distro_common
     if [[ -z "${repo_urls['archlinux32']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
@@ -722,7 +736,7 @@ distro_archlinux32() {
 distro_archlinuxarm() {
     distro_stylised='Arch Linux ARM'
     distro_safe='archlinuxarm'
-    require_arch_target aarch64 armv7h
+    require_arch_target "${distro_stylised}" aarch64 armv7h
     distro_common
     if [[ -z "${repo_urls['archlinuxarm']:-}" ]]; then
         local mirror_alarm_suffix='$arch/$repo'
@@ -733,13 +747,13 @@ distro_archlinuxarm() {
         fi
     fi
     declare -gn repo_url_base=repo_urls['archlinuxarm']
-    repo_keyrings+=('archlinuxarm-keyring')
+    bootstrap_pkgs+=('archlinuxarm-keyring')
 }
 
 distro_loongarchlinux() {
     distro_stylised='Loong Arch Linux'
     distro_safe='loongarchlinux'
-    require_arch_target loong64
+    require_arch_target "${distro_stylised}" loong64
     distro_common
     if [[ -z "${repo_urls['loongarchlinux']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
@@ -761,7 +775,7 @@ distro_loongarchlinux() {
 distro_archriscv() {
     distro_stylised='Arch Linux RISC-V'
     distro_safe='archriscv'
-    require_arch_target riscv64
+    require_arch_target "${distro_stylised}" riscv64
     distro_common
     if [[ -z "${repo_urls['archriscv']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
@@ -836,7 +850,7 @@ configure_distro() {
 
 configure_repo() {
     local repo
-    for repo in "${repos_add[@]}"; do
+    for repo in "${add_repos[@]}"; do
         "repo_${repo}"
     done
 }
@@ -1169,7 +1183,12 @@ child_init_keyring() {
 }
 
 child_init_bootstrap() {
-    local keyring_id=$(printf '%s+' "${distro_safe}" "${repo_keyrings[@]}")
+    local keyring_id="${distro_safe}" bootstrap_pkg
+    for bootstrap_pkg in "${bootstrap_pkgs[@]}"; do
+        if [[ "${bootstrap_pkg}" == *keyring* ]]; then
+            keyring_id+="+${bootstrap_pkg}"
+        fi
+    done
     local keyring_archive=cache/keyring/"${keyring_id}".tar
     local path_keyring="${path_root}/etc/pacman.d/gnupg"
     local config
@@ -1186,7 +1205,7 @@ child_init_bootstrap() {
             "bootstrap packages. It is recommended to rebuild after this try!"
         config="${path_etc}/pacman-loose.conf"
     fi
-    pacman -Sy --config "${config}" --noconfirm base "${repo_keyrings[@]}"
+    pacman -Sy --config "${config}" --noconfirm base "${bootstrap_pkgs[@]}"
     child_check_binfmt
     child_init_keyring
 }
@@ -1208,7 +1227,7 @@ child_setup() {
         eval "${log_info}" || echo \
             "Installing the following packages: ${install_pkgs[*]}"
         pacman -Su --config "${path_etc}/pacman-strict.conf" --noconfirm \
-            "${install_pkgs[@]}" lsof
+            --needed "${install_pkgs[@]}"
     fi
 }
 
@@ -1385,7 +1404,8 @@ help_aimager() {
 
     printf '\nBootstrapping options:\n'
     printf -- "${formatter}" \
-        'repo-add [repo]' 'add an addtional repo, usually third party, pass help to get the list of built-in third party repos, pass help=[repo] to get the repo definition'\
+        'add-repo [repo]' 'add an addtional repo, usually third party, pass help to get the list of built-in third party repos, pass help=[repo] to get the repo definition, can be specified multiple times'\
+        'add-repos [repos]' 'comma seperated list of repos, shorthand for multiple --add-repo, can be specified multiple times'\
         'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package to prepare pacman-strict.conf and pacman-loose.conf; default: core' \
         'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
         'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
@@ -1432,7 +1452,7 @@ aimager_cli() {
     # declare -A config_dynamic
     # declare
     local args_original="$@"
-    local install_pkgs_new=()
+    local splitted=()
     while (( $# > 0 )); do
         case "$1" in
         # Host options
@@ -1486,7 +1506,7 @@ aimager_cli() {
             shift
             ;;
         # Boostrapping options
-        '--repo-add')
+        '--add-repo')
             case "$2" in
             'help')
                 help_repo
@@ -1498,10 +1518,15 @@ aimager_cli() {
                 return
                 ;;
             *)
-                repos_add+=("$2")
+                add_repos+=("$2")
                 shift
                 ;;
             esac
+            ;;
+        '--add-repos')
+            IFS=', ' read -r -a splitted <<< "$2"
+            add_repos+=("${splitted[@]}")
+            shift
             ;;
         '--repo-core')
             repo_core="$2"
@@ -1533,8 +1558,8 @@ aimager_cli() {
             shift
             ;;
         '--install-pkgs')
-            IFS=', ' read -r -a install_pkgs_new <<< "$2"
-            install_pkgs+=("${install_pkgs_new[@]}")
+            IFS=', ' read -r -a splitted <<< "$2"
+            install_pkgs+=("${splitted[@]}")
             shift
             ;;
         '--overlay')
