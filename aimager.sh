@@ -502,23 +502,23 @@ table_part() { #1 name, 2 start, 3 size, 4 type, 5 suffix
     echo "size=$3,type=$4$5"
 }
 
-_table_common_mbr_1g_esp() {
+table_common_mbr_1g_esp() {
     table_mbr_header
     table_part boot '' 1G uefi ',bootable'
 }
 
-_table_common_gpt_1g_esp() {
+table_common_gpt_1g_esp() {
     table_gpt_header
     table_part boot '' 1G uefi ''
 }
 
 table_common_gpt_1g_esp_16g_root_aarch64() {
-    _table_common_gpt_1g_esp
+    table_common_gpt_1g_esp
     table_part root '' 16G '"Linux root (ARM-64)"' ''
 }
 
 table_common_gpt_1g_esp_16g_root_x86_64() {
-    _table_common_gpt_1g_esp
+    table_common_gpt_1g_esp
     table_part root '' 16G '"Linux root (x86-64)"' ''
 }
 
@@ -528,7 +528,7 @@ table_common_mbr_16g_root() {
 }
 
 table_common_mbr_1g_esp_16g_root_aarch64() {
-    _table_common_mbr_1g_esp
+    table_common_mbr_1g_esp
     table_part root '' 16G 
 }
 
@@ -570,7 +570,7 @@ board_amlogic_s9xxx() {
     fi
 }
 
-_board_orangepi_5_family() {
+board_orangepi_5_family() {
     distro='Arch Linux ARM'
     arch_target='aarch64'
     bootloader='u-boot'
@@ -580,19 +580,19 @@ _board_orangepi_5_family() {
 }
 
 board_orangepi_5() {
-    _board_orangepi_5_family
+    board_orangepi_5_family
 }
 
 board_orangepi_5_plus() {
-    _board_orangepi_5_family
+    board_orangepi_5_family
 }
 
 board_orangepi_5_max() {
-    _board_orangepi_5_family
+    board_orangepi_5_family
 }
 
 board_orangepi_5_pro() {
-    _board_orangepi_5_family
+    board_orangepi_5_family
 }
 
 help_board() {
@@ -678,7 +678,7 @@ require_arch_target() {
     return 1
 }
 
-_distro_common() {
+distro_common() {
     repo_core="${repo_core:-core}"
 }
 
@@ -686,7 +686,7 @@ distro_archlinux() {
     distro_stylised='Arch Linux'
     distro_safe='archlinux'
     require_arch_target x86_64
-    _distro_common
+    distro_common
     if [[ -z "${repo_urls['archlinux']:-}" ]]; then
         local mirror_arch_suffix='$repo/os/$arch'
         if [[ "${repo_url_parent}" ]]; then
@@ -702,7 +702,7 @@ distro_archlinux32() {
     distro_stylised='Arch Linux 32'
     distro_safe='archlinux32'
     require_arch_target i486 pentium4 i686
-    _distro_common
+    distro_common
     if [[ -z "${repo_urls['archlinux32']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['archlinux32']="${repo_url_parent}"'/archlinux32/$arch/$repo'
@@ -723,7 +723,7 @@ distro_archlinuxarm() {
     distro_stylised='Arch Linux ARM'
     distro_safe='archlinuxarm'
     require_arch_target aarch64 armv7h
-    _distro_common
+    distro_common
     if [[ -z "${repo_urls['archlinuxarm']:-}" ]]; then
         local mirror_alarm_suffix='$arch/$repo'
         if [[ "${repo_url_parent}" ]]; then
@@ -740,7 +740,7 @@ distro_loongarchlinux() {
     distro_stylised='Loong Arch Linux'
     distro_safe='loongarchlinux'
     require_arch_target loong64
-    _distro_common
+    distro_common
     if [[ -z "${repo_urls['loongarchlinux']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['loongarchlinux']="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
@@ -762,7 +762,7 @@ distro_archriscv() {
     distro_stylised='Arch Linux RISC-V'
     distro_safe='archriscv'
     require_arch_target riscv64
-    _distro_common
+    distro_common
     if [[ -z "${repo_urls['archriscv']:-}" ]]; then
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['archriscv']="${repo_url_parent}"'/archriscv/repo/$repo'
@@ -1398,7 +1398,7 @@ help_aimager() {
         'install-pkg [pkg]' 'install the certain package after bootstrapping, can be specified multiple times, you should NOT install keyring packages here'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
-        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
+        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
@@ -1542,12 +1542,21 @@ aimager_cli() {
             shift
             ;;
         '--table')
-            if [[ "$2" == 'help' ]]; then
+            case "$2" in
+            'help')
                 help_table
                 return
-            fi
-            table="$2"
-            shift
+                ;;
+            'help='*)
+                help_table
+                "table_common_${2:5}"
+                return
+                ;;
+            *)
+                table="$2"
+                shift
+                ;;
+            esac
             ;;
         # Builder behaviour options
         '--freeze-pacman-config')
