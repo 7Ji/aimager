@@ -83,6 +83,7 @@ aimager_init() {
     declare -gA repo_urls
     reuse_root_tar=''
     ## run-time behaviour
+    async_child=0
     freeze_pacman_config=0
     freeze_pacman_static=0
     tmpfs_root_options=''
@@ -975,7 +976,7 @@ identity_require_root() {
 }
 
 identity_require_non_root() {
-    identity_get_name_uid_gid
+    identity_get_name_uid_gid || return 1
     if [[ "${identity_name}" == 'root' ]]; then
         eval "${log_error}" || echo \
             'Current context require us to NOT run as root but we are root'
@@ -996,7 +997,7 @@ identity_require_non_root() {
 }
 
 identity_require_mapped_root() {
-    identity_require_root
+    identity_require_root || return 1
     eval "${log_info}" || echo \
         'Trying to write content under /sys to check whether we were'\
         'mapped to root or are real root.'\
@@ -1214,18 +1215,14 @@ child_clean() {
     rm -rf "${path_root}"
 }
 
-child_signal() {
-    trap \
-        'eval "${log_warn}" || echo "SIGINT received, bad exiting"; exit 1' \
-        INT
-    trap \
-        'eval "${log_warn}" || echo "SIGTERM received, bad exiting"; exit 1' \
-        TERM
-}
-
 child() {
     child_wait
-    child_signal
+    local signal
+    for signal in INT TERM; do
+        trap "
+            echo '[child.sh:WARN] SIG${signal} received, bad exiting'
+            exit 1" "${signal}"
+    done
     child_fs
     child_init
     child_setup
@@ -1265,23 +1262,37 @@ run_child_and_wait_async() {
     unshare --user --pid --mount --fork \
         /bin/bash "${path_build}/bin/child.sh"  &
     pid_child="$!"
+    local signal
+    for signal in INT TERM EXIT; do
+        trap "
+            echo '[child.sh:WARN] SIG${signal} received, killing ${pid_child}' 
+            kill -s SIGINT '${pid_child}' || true
+            wait '${pid_child}'
+            kill -s SIGTERM '${pid_child}' || true
+            exit 1
+        " "${signal}"
+    done
     sleep 1
     newuidmap "${pid_child}" \
-        0 "${identity_uid}" \
-        1 1 \
-        "${identity_subuid_start}" "${identity_subuid_range}"
+        0 "${identity_uid}" 1 \
+        1 "${identity_subuid_start}" "${identity_subuid_range}"
     newgidmap "${pid_child}" \
-        0 "${identity_gid}" \
-        1 1 \
-        "${identity_subgid_start}" "${identity_subgid_range}"
+        0 "${identity_gid}" 1 \
+        1 "${identity_subgid_start}" "${identity_subgid_range}"
     eval "${log_info}" || echo \
         "Mapped UIDs and GIDs for child ${pid_child}, "\
         "waiting for it to finish..."
     wait "${pid_child}"
+    trap - INT TERM EXIT
     eval "${log_info}" || echo "Child ${pid_child} finished successfully"
 }
 
 run_child_and_wait() {
+    if (( "${async_child}" )); then
+        eval "${log_warn}" || echo 'Forcing to spwan child in async way'
+        run_child_and_wait_async
+        return
+    fi
     local unshare_fields=$(
         unshare --help | sed 's/^ \+--map-users=\(.\+\)$/\1/p' -n)
     # Just why do they change the CLI so frequently?
@@ -1370,6 +1381,7 @@ help_aimager() {
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
+        'async-child' 'use always the async way to unshare and wait for child (basically unshare in a background job and we map in main Bash instance then wait), instead of trying to use the sync way to unshare and wait for child (basically unshare itself does the mapping and we call it in a blocking way) when unshare is new enough and async otherwise' \
         'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
         'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
@@ -1516,6 +1528,9 @@ aimager_cli() {
             use_pacman_static=1
             ;;
         # Run-target options
+        '--async-child')
+            async_child=1
+            ;;
         '--before-spwan')
             run_before_spawn=1
             ;;
