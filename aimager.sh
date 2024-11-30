@@ -153,9 +153,11 @@ check_executables() {
     check_executable_must_exist readlink 'get stdout psuedo terminal path'
     check_executable_must_exist sed 'do text substitution'
     check_executable_must_exist sleep 'wait for jobs to complete'
+    check_executable_must_exist sort 'sort values'
     check_executable_must_exist stat 'get file modification date'
     check_executable_must_exist tar 'extract file from archives'
     check_executable_must_exist uname 'dump machine architecture'
+    check_executable_must_exist uniq 'get unique values'
     check_executable_must_exist unshare 'unshare child process'
     if (( "${use_pacman_static}" )) ||
         ! check_executable_must_exist pacman 'install packages'
@@ -1212,10 +1214,14 @@ child_init_keyring() {
 
 child_init_bootstrap() {
     local keyring_id="${distro_safe}" bootstrap_pkg
-    for bootstrap_pkg in "${bootstrap_pkgs[@]}"; do
-        if [[ "${bootstrap_pkg}" == *keyring* ]]; then
-            keyring_id+="+${bootstrap_pkg}"
-        fi
+    local keyring_pkgs
+    for bootstrap_pkg in $(
+        printf '%s\n' "${bootstrap_pkgs[@]}" |
+            grep 'keyring' |
+            sort | 
+            uniq
+    ); do
+        keyring_id+="+${bootstrap_pkg}"
     done
     local keyring_archive=cache/keyring/"${keyring_id}".tar
     local path_keyring="${path_root}/etc/pacman.d/gnupg"
