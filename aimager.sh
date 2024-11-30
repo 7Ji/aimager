@@ -66,7 +66,6 @@ aimager_init() {
     board='none'
     build_id=''
     bootstrap_pkgs=()
-    clean_builds=0
     creates=()
     distro=''
     freeze_pacman_config=0
@@ -83,7 +82,9 @@ aimager_init() {
     repos_base=()
     reuse_root_tar=''
     run_binfmt_check=0
-    run_before_spawn=0
+    run_only_prepare_child=0
+    run_clean_builds=0
+    run_only_backup_keyring=0
     script_name=aimager.sh
     table=''
     tmpfs_root_options=''
@@ -582,6 +583,7 @@ board_orangepi_5_family() {
     if [[ -z "${table:-}" ]]; then
         table='=gpt_1g_esp_16g_root_aarch64'
     fi
+    add_repos+=('7Ji')
     install_pkgs+=('linux-aarch64-rockchip-joshua-git')
 }
 
@@ -1337,7 +1339,7 @@ child_clean() {
 
 child() {
     child_wait
-    if (( "${clean_builds}" )); then
+    if (( "${run_clean_builds}" )); then
         eval "${log_info}" || echo 'Cleaning builds...'
         rm -rf cache/build.*
         return
@@ -1350,9 +1352,13 @@ child() {
     done
     child_fs
     child_init
-    child_setup
-    trap - INT TERM KILL
-    child_out
+    if (( "${run_only_backup_keyring}" )); then
+        trap - INT TERM KILL
+    else
+        child_setup
+        trap - INT TERM KILL
+        child_out
+    fi
     child_clean
     eval "${log_info}" || echo 'Child exiting!!'
 }
@@ -1447,7 +1453,7 @@ work() {
         "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
-    if (( "${run_before_spawn}" )); then
+    if (( "${run_only_prepare_child}" )); then
         eval "${log_info}" || echo 'Early exiting before spawning child ...'
         return
     fi
@@ -1466,60 +1472,6 @@ aimager() {
     check
     work
     eval "${log_info}" || echo 'aimager exiting!!'
-}
-
-help_aimager() {
-    echo 'Usage:'
-    echo "  $0 ([--option] ([option argument])) ..."
-    local formatter='    --%-25s %s\n'
-
-    printf '\nHost options:\n'
-    printf -- "${formatter}" \
-        'arch-host [arch]' 'host architecture; default: result of `uname -m`' \
-    
-    printf '\nImage overall options:\n'
-    printf -- "${formatter}" \
-        'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
-        'arch [arch]' 'alias to --arch-target' \
-        'board [board]' 'board, would call corresponding built-in board definition to define other options, pass "help" to get the list of supported boards, pass "help=[board]" to get the board definition; default: none' \
-        'build-id [build id]' 'a unique build id; default: [distro safe name]-[target architecture]-[board]-[yyyymmddhhmmss]' \
-        'distro [distro]*' 'distro, required, passing "help" to get the list of supported distros, pass "help=[distro]" to get the distro definition' \
-        'out-prefix [prefix]' 'prefix to output archives and images, default: out/[build id]-'\
-
-    printf '\nBootstrapping options:\n'
-    printf -- "${formatter}" \
-        'add-repo [repo]' 'add an addtional repo, usually third party, pass help to get the list of built-in third party repos, pass help=[repo] to get the repo definition, can be specified multiple times'\
-        'add-repos [repos]' 'comma seperated list of repos, shorthand for multiple --add-repo, can be specified multiple times'\
-        'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package to prepare pacman-strict.conf and pacman-loose.conf; default: core' \
-        'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
-        'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
-        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
-        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping, only do package installation and later steps' \
-
-    printf '\nSetup options:\n'
-    printf -- "${formatter}" \
-        'initrd-maker [maker]' 'initrd maker: booster(default)/mkinitcpio/dracut, initrd-maker is installed before all other packages after bootstrapping so aimager could config it to only build universal images, and it would only be installed if initramfs virtual package has no provider, that is, if you use --reuse-root to do incremental build then in most cases later --initrd-maker has no use. ' \
-        'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
-        'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
-        'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
-        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
-
-    printf '\nBuilder behaviour options:\n'
-    printf -- "${formatter}" \
-        'async-child' 'use always the async way to unshare and wait for child (basically unshare in a background job and we map in main Bash instance then wait), instead of trying to use the sync way to unshare and wait for child (basically unshare itself does the mapping and we call it in a blocking way) when unshare is new enough and async otherwise' \
-        'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
-        'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
-        'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
-        'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set (default) then pacman-static would only be downloaded and used when we cannot find pacman'\
-
-    printf '\nRun-target options:\n'
-    printf -- "${formatter}" \
-        'before-spwan' 'early exit before spawning child, mainly for debugging' \
-        'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
-        'clean-builds' 'clean builds and early quit'\
-        'create [target]' 'create a certain target, artifact would be [out-prefix][target], can be specified multiple times, pass "help" to check for allowed to-be-created target, a built-in target root.tar would always be created whether you set it or not'\
-        'help' 'print this help message' \
-
 }
 
 create_part_root_img() {
@@ -1587,6 +1539,61 @@ help_create() {
     return
 }
 
+help_aimager() {
+    echo 'Usage:'
+    echo "  $0 ([--option] ([option argument])) ..."
+    local formatter='    --%-25s %s\n'
+
+    printf '\nHost options:\n'
+    printf -- "${formatter}" \
+        'arch-host [arch]' 'host architecture; default: result of `uname -m`' \
+    
+    printf '\nImage overall options:\n'
+    printf -- "${formatter}" \
+        'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
+        'arch [arch]' 'alias to --arch-target' \
+        'board [board]' 'board, would call corresponding built-in board definition to define other options, pass "help" to get the list of supported boards, pass "help=[board]" to get the board definition; default: none' \
+        'build-id [build id]' 'a unique build id; default: [distro safe name]-[target architecture]-[board]-[yyyymmddhhmmss]' \
+        'distro [distro]*' 'distro, required, passing "help" to get the list of supported distros, pass "help=[distro]" to get the distro definition' \
+        'out-prefix [prefix]' 'prefix to output archives and images, default: out/[build id]-'\
+
+    printf '\nBootstrapping options:\n'
+    printf -- "${formatter}" \
+        'add-repo [repo]' 'add an addtional repo, usually third party, pass help to get the list of built-in third party repos, pass help=[repo] to get the repo definition, can be specified multiple times'\
+        'add-repos [repos]' 'comma seperated list of repos, shorthand for multiple --add-repo, can be specified multiple times'\
+        'repo-core [repo]' 'the name of the distro core repo, this is used to dump etc/pacman.conf from the pacman package to prepare pacman-strict.conf and pacman-loose.conf; default: core' \
+        'repo-url-parent [parent]' 'the URL parent of repos, usually public mirror sites fast and close to the builder, used to generate the whole repo URL, if this is not set then global mirror URL would be used if that repo has defined such, some repos need always this to be set as they do not provide a global URL, note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: https://mirrors.mit.edu' \
+        'repo-url-[name] [url]' 'specify the full URL for a certain repo, should be in the format used in pacman.conf Server= definition, if this is not set for a repo then it would fall back to --repo-url-parent logic (see above), for third-party repos the name is exactly its name and for offiical repos the name is exactly the undercased distro name (first name in bracket in --distro help), note this has no effect on the pacman.conf in final image but only for building; default: [none]; e.g.: --repo-url-archlinux '"'"'https://mirrors.xtom.com/archlinux/$repo/os/$arch/'"'" \
+        'repos-base [repo]' 'comma seperated list of base repos, order matters, if this is not set then it is generated from the pacman package dumped from core repo, as the upstream list might change please only set this when you really want a different list from upstream such as when you want to enable a testing repo, e.g., core-testing,core,extra-testing,extra,multilib-testing,multilib default: [none]' \
+        'reuse-root-tar [tar]' 'reuse a tar to skip root bootstrapping, only do package installation and later steps' \
+
+    printf '\nSetup options:\n'
+    printf -- "${formatter}" \
+        'initrd-maker [maker]' 'initrd maker: booster(default)/mkinitcpio/dracut, initrd-maker is installed before all other packages after bootstrapping so aimager could config it to only build universal images, and it would only be installed if initramfs virtual package has no provider, that is, if you use --reuse-root to do incremental build then in most cases later --initrd-maker has no use. ' \
+        'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
+        'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
+        'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
+        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
+
+    printf '\nBuilder behaviour options:\n'
+    printf -- "${formatter}" \
+        'async-child' 'use always the async way to unshare and wait for child (basically unshare in a background job and we map in main Bash instance then wait), instead of trying to use the sync way to unshare and wait for child (basically unshare itself does the mapping and we call it in a blocking way) when unshare is new enough and async otherwise' \
+        'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
+        'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
+        'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
+        'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set (default) then pacman-static would only be downloaded and used when we cannot find pacman'\
+
+    printf '\nRun-target options:\n'
+    printf -- "${formatter}" \
+        'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
+        'clean-builds' 'clean builds and early quit'\
+        'create [target]' 'create a certain target, artifact would be [out-prefix][target], can be specified multiple times, pass "help" to check for allowed to-be-created target, a built-in target root.tar would always be created whether you set it or not'\
+        'help' 'print this help message' \
+        'only-backup-keyring' 'bootstrap, init and populate the keyring, backup, then early quit'\
+        'only-prepare-child' 'early exit before spawning child, mainly for debugging' \
+
+}
+
 report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining args
     echo "$1 $2"
     local args_remaining_collapsed="${@:3}"
@@ -1604,6 +1611,7 @@ aimager_cli() {
     # declare
     local args_original="$@"
     local splitted=()
+    local bad_arg=0
     while (( $# > 0 )); do
         case "$1" in
         # Host options
@@ -1754,14 +1762,11 @@ aimager_cli() {
         '--async-child')
             async_child=1
             ;;
-        '--before-spwan')
-            run_before_spawn=1
-            ;;
         '--binfmt-check')
             run_binfmt_check=1
             ;;
         '--clean-builds')
-            clean_builds=1
+            run_clean_builds=1
             ;;
         '--create')
             case "$2" in
@@ -1780,6 +1785,12 @@ aimager_cli() {
                 ;;
             esac
             ;;
+        '--only-prepare-child')
+            run_only_prepare_child=1
+            ;;
+        '--only-backup-keyring')
+            run_only_backup_keyring=1
+            ;;
         '--help')
             help_aimager
             return 0
@@ -1789,12 +1800,16 @@ aimager_cli() {
                 echo "Unknown argument '$1'"
                 report_wrong_arg './aimager.sh' "${args_original[*]}" "$@"
             fi
-            return 1
+            bad_arg=1
             ;;
         esac
         shift
     done
-    aimager
+    if (( "${bad_arg}" )); then
+        return 1
+    else
+        aimager
+    fi
 }
 
 aimager_init
