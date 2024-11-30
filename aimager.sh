@@ -64,6 +64,7 @@ aimager_init() {
     arch_target="${arch_host}"
     async_child=0
     board='none'
+    keyring_helper=''
     build_id=''
     bootstrap_pkgs=()
     creates=()
@@ -1197,12 +1198,43 @@ child_init_reuse() {
 
 child_init_keyring() {
     if [[ ! -f "${keyring_archive}" ]]; then
+        local path_chroot="${path_root}"
+        if [[ "${keyring_helper}" ]]; then
+            eval "${log_info}" || echo \
+                "Borrowing keyring manager from root archive"\
+                "'${keyring_helper}' to sub /mnt ..."
+            if [[ ! -f "${keyring_helper}" ]]; then
+                eval "${log_error}" || echo \
+                    "'${keyring_helper}' is not a file (and certainly not a"\
+                    'root archive), can not figure out how to borrow'\
+                    'keyring managers from it'
+                return 1
+            fi
+            mkdir -p "${path_root}"/{etc/pacman.d/gnupg,usr/share/pacman/keyrings,mnt/{dev,proc}}
+            bsdtar --acls --xattrs -xpf "${keyring_helper}" \
+                -C "${path_root}/mnt"
+            mount -o bind "${path_root}"{,/mnt}/dev
+            mount -o bind "${path_root}"{,/mnt}/proc
+            mount -o bind "${path_root}"{,/mnt}/etc/pacman.d/gnupg
+            mount -o bind "${path_root}"{,/mnt}/usr/share/pacman/keyrings
+            path_chroot+='/mnt'
+        elif (( ${arch_cross} )); then
+            eval "${log_warn}" || echo \
+                "Initializing and populating keyring '${keyring_id}' for the"\
+                "first time cross-architecture (from arch '${arch_host}' to"\
+                "arch '${arch_target}') using target keyring managers. This"\
+                "might take a very long time as gpg and its calculation for"\
+                "encryption/decryption/hashing needs to be handled by QEMU."\
+                "To speed this up consider pass --keyring-helper to borrow"\
+                "keyring managers from a previously created rootfs archive for"\
+                "the native architecture (yours is '${arch_host}')."
+        fi
         eval "${log_info}" || echo \
             "Initializing keyring '${keyring_id}' for the first time..."
-        chroot "${path_root}" pacman-key --init
+        chroot "${path_chroot}" pacman-key --init
         eval "${log_info}" || echo \
             "Populating keyring '${keyring_id}' for the first time..."
-        chroot "${path_root}" pacman-key --populate
+        chroot "${path_chroot}" pacman-key --populate
     fi
     mkdir -p cache/keyring
     eval "${log_info}" || echo \
@@ -1218,7 +1250,7 @@ child_init_bootstrap() {
     for bootstrap_pkg in $(
         printf '%s\n' "${bootstrap_pkgs[@]}" |
             grep 'keyring' |
-            sort | 
+            sort |
             uniq
     ); do
         keyring_id+="+${bootstrap_pkg}"
@@ -1315,7 +1347,7 @@ child_setup() {
 child_out() {
     eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
     bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" \
-        --exclude ./dev --exclude ./proc --exclude ./sys \
+        --exclude ./dev --exclude ./mnt --exclude ./proc --exclude ./sys \
         --exclude ./etc/pacman.d/gnupg/S.\* \
         .
     mv "${out_root_tar}"{.temp,}
@@ -1553,7 +1585,7 @@ help_aimager() {
     printf '\nHost options:\n'
     printf -- "${formatter}" \
         'arch-host [arch]' 'host architecture; default: result of `uname -m`' \
-    
+
     printf '\nImage overall options:\n'
     printf -- "${formatter}" \
         'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
@@ -1586,6 +1618,7 @@ help_aimager() {
         'async-child' 'use always the async way to unshare and wait for child (basically unshare in a background job and we map in main Bash instance then wait), instead of trying to use the sync way to unshare and wait for child (basically unshare itself does the mapping and we call it in a blocking way) when unshare is new enough and async otherwise' \
         'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
+        'keyring-helper [archive]' 'borrow keyring managers (pacman-key, gpg and other crypt libs) from a previously created root archive, native arch is the best, used during keyring initialization to avoid the bottleneck caused by calling gpg via QEMU. it is recommended to always use this if you are cross-building and the qemu-based gpg from target architecture runs too slow. currently the whole root archive would be extracted to sub /mnt, so use in caution when in combination with --tmpfs-root'\
         'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
         'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set (default) then pacman-static would only be downloaded and used when we cannot find pacman'\
 
@@ -1749,6 +1782,13 @@ aimager_cli() {
             esac
             ;;
         # Builder behaviour options
+        '--async-child')
+            async_child=1
+            ;;
+        '--keyring-helper')
+            keyring_helper="$2" 
+            shift
+            ;;
         '--freeze-pacman-config')
             freeze_pacman_config=1
             ;;
@@ -1765,9 +1805,6 @@ aimager_cli() {
             use_pacman_static=1
             ;;
         # Run-target options
-        '--async-child')
-            async_child=1
-            ;;
         '--binfmt-check')
             run_binfmt_check=1
             ;;
