@@ -2,7 +2,7 @@
 
 ## In-and-out
 
-aimager is a **rootless**, **cross-distro** and **cross-architecture** Arch Linux and Arch Linux ports builder, with all of its logic written in **a single Bash script file** using only Bash-native logics and a limited set of Linux tools as dependencies, with config built-in.
+aimager is a **rootless**, **cross-distro** and **cross-architecture** Arch Linux and Arch Linux ports image/archive builder, with all of its logic written in **a single Bash script file** using only Bash-native logics and a limited set of Linux tools as dependencies, with config built-in.
 
 aimager does not depend on any other Arch installation script (the common `pacstrap`, `genfstab`, etc), all it depends is `pacman`, and it knows how to fetch a statically built one that would run on any other distro (like on the Github Actions' Ubuntu runners) if it fails to find it on the current system.
 

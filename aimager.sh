@@ -558,6 +558,7 @@ board_x64_uefi() {
     if [[ -z "${table:-}" ]]; then
         table='=gpt_1g_esp_16g_root_x86_64'
     fi
+    initrd_maker="${initrd_maker:-booster}"
     install_pkgs+=('linux')
 }
 
@@ -568,6 +569,7 @@ board_x86_legacy() {
     if [[ -z "${table:-}" ]]; then
         table='=mbr_16g_root'
     fi
+    initrd_maker="${initrd_maker:-booster}"
     install_pkgs+=('linux')
 }
 
@@ -578,6 +580,7 @@ board_amlogic_s9xxx() {
     if [[ -z "${table:-}" ]]; then
         table='=mbr_1g_esp_16g_root_aarch64'
     fi
+    initrd_maker="${initrd_maker:-booster}"
 }
 
 board_orangepi_5_family() {
@@ -588,6 +591,7 @@ board_orangepi_5_family() {
         table='=gpt_1g_esp_16g_root_aarch64'
     fi
     add_repos+=('7Ji')
+    initrd_maker="${initrd_maker:-booster}"
     install_pkgs+=('linux-aarch64-rockchip-joshua-git')
 }
 
@@ -907,7 +911,6 @@ configure_out() {
             "Output prefix contains folder, pre-creating it..."
         mkdir -p "${out_prefix%/*}"
     fi
-    out_root_tar="${out_prefix}root.tar"
 }
 
 configure_table() {
@@ -932,9 +935,9 @@ configure_table() {
         fi
         ;;
     '')
-        eval "${log_error}" || echo \
+        eval "${log_warn}" || echo \
             'Table not defined, please define it with --table'
-            return 1
+            # return 1
         ;;
     esac
     if ! eval "${log_info}"; then
@@ -943,9 +946,9 @@ configure_table() {
     fi
 }
 
-configure_initrd_maker() {
-    initrd_maker="${initrd_maker:-booster}"
-}
+# configure_initrd_maker() {
+#     initrd_maker="${initrd_maker:-booster}"
+# }
 
 configure_pkgs() {
     local pkgs_allowed=()
@@ -966,7 +969,7 @@ configure_pkgs() {
 }
 
 configure_dynamic() {
-    configure_initrd_maker
+    # configure_initrd_maker
     configure_pkgs
     configure_architecture
     configure_build
@@ -1211,9 +1214,10 @@ child_init_keyring() {
                     'keyring managers from it'
                 return 1
             fi
-            mkdir -p "${path_root}"/{etc/pacman.d/gnupg,usr/share/pacman/keyrings,mnt/{dev,proc,usr/share/pacman/keyrings}}
+            mkdir -p "${path_root}"/{etc/pacman.d/gnupg,usr/share/pacman/keyrings,mnt/{dev,proc,etc/pacman.d/gnupg,usr/share/pacman/keyrings}}
             bsdtar --acls --xattrs -xpf "${keyring_helper}" \
                 -C "${path_root}/mnt" \
+                --exclude 'etc/pacman.d/gnupg' \
                 'bin' 'etc/pacman*' 'lib*' \
                 'usr/bin' 'usr/lib/getconf' 'usr/lib/*.so*' 'usr/share/makepkg'
             mount -o bind "${path_root}"{,/mnt}/dev
@@ -1301,9 +1305,17 @@ child_setup_initrd_maker() {
     then
         return
     fi
-    eval "${log_info}" || echo "Installing initrd maker ${initrd_maker}..."
-    pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
-        "${initrd_maker}"
+    if [[ "${initrd_maker}" ]]; then
+        eval "${log_info}" || echo "Installing initrd maker ${initrd_maker}..."
+        pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
+            "${initrd_maker}"
+    else
+        eval "${log_warn}" || echo \
+            'Not installing any initrd maker! If you really are installing any'\
+            'kernel pacakges, it is recommended to use --initrd-maker to let'\
+            'aimager install the initrd maker so it could do some workarounds'\
+            'like only enabling the universal config.'
+    fi
     case "${initrd_maker}" in
     'booster')
         cp "${path_root}/etc/booster.yaml"{,.pacsave}
@@ -1316,6 +1328,8 @@ child_setup_initrd_maker() {
         ;;
     'dracut')
         child_initrd_set_universal_dracut
+        ;;
+    '')
         ;;
     *)
         eval "${log_error}" || echo \
@@ -1366,13 +1380,8 @@ child_setup() {
 }
 
 child_out() {
-    eval "${log_info}" || echo "Creating root archive to '${out_root_tar}'..."
-    bsdtar --acls --xattrs -cpf "${out_root_tar}.temp" -C "${path_root}" \
-        --exclude ./dev --exclude ./mnt --exclude ./proc --exclude ./sys \
-        --exclude ./etc/pacman.d/gnupg/S.\* \
-        .
-    mv "${out_root_tar}"{.temp,}
     local create
+    declare -A created
     for create in "${creates[@]}"; do
         create="${create/-/_}"
         create="${create/./_}"
@@ -1533,52 +1542,89 @@ aimager() {
     eval "${log_info}" || echo 'aimager exiting!!'
 }
 
-create_part_root_img() {
-    local part_info
-    if part_info=$(grep '^name=[^,]*[rR][oO][oO][tT],' <<< "${table}");
-    then
-        eval "${log_info}" || echo \
-            "Creating part-root.img according to the following partition info:"\
-            "${part_info}"
-    else
-        eval "${log_error}" || echo \
-            'Partition table does not contain root partition:'
-        echo "${table}"
-        return 1
-    fi
-    eval "${log_info}" || echo 'Creating part-root.img...'
+# create_part_root_img() {
+#     local part_info
+#     if part_info=$(grep '^name=[^,]*[rR][oO][oO][tT],' <<< "${table}");
+#     then
+#         eval "${log_info}" || echo \
+#             "Creating part-root.img according to the following partition info:"\
+#             "${part_info}"
+#     else
+#         eval "${log_error}" || echo \
+#             'Partition table does not contain root partition:'
+#         echo "${table}"
+#         return 1
+#     fi
+#     eval "${log_info}" || echo 'Creating part-root.img...'
+# }
+
+# create_part_boot_img() {
+#     local part_info
+#     if part_info=$(grep '^name=[^,]*[bB][oO][oO][tT],' <<< "${table}");
+#     then
+#         eval "${log_info}" || echo \
+#             "Creating part-boot.img according to the following partition info:"\
+#             "${part_info}"
+#     else
+#         eval "${log_error}" || echo \
+#             'Partition table does not contain boot partition:'
+#         echo "${table}"
+#         return 1
+#     fi
+#     eval "${log_info}" || echo 'Creating part-boot.img...'
+# }
+
+# create_part_home_img() {
+#     local part_info
+#     if part_info=$(grep '^name=[^,]*[hH][oO][mM][eE],' <<< "${table}");
+#     then
+#         eval "${log_info}" || echo \
+#             "Creating part-home.img according to the following partition info:"\
+#             "${part_info}"
+#     else
+#         eval "${log_error}" || echo \
+#             'Partition table does not contain home partition:'
+#         echo "${table}"
+#         return 1
+#     fi
+#     eval "${log_info}" || echo 'Creating part-home.img...'
+# }
+
+create_root_tar() {
+    local path_out="${out_prefix}root.tar"
+    eval "${log_info}" || echo "Creating root archive '${path_out}'..."
+    bsdtar --acls --xattrs -cpf "${path_out}.temp" -C "${path_root}" \
+        --exclude './dev' --exclude './mnt' --exclude './proc' \
+        --exclude './sys' --exclude './etc/pacman.d/gnupg/S.*' \
+        .
+    mv "${path_out}"{.temp,}
+    created['root.tar']='y'
+    eval "${log_info}" || echo "Created root archive '${path_out}'"
 }
 
-create_part_boot_img() {
-    local part_info
-    if part_info=$(grep '^name=[^,]*[bB][oO][oO][tT],' <<< "${table}");
-    then
-        eval "${log_info}" || echo \
-            "Creating part-boot.img according to the following partition info:"\
-            "${part_info}"
+create_keyring_helper_tar() {
+    local path_out="${out_prefix}keyring-helper.tar"
+    eval "${log_info}" || echo "Creating keyring helper '${path_out}'..."
+    local filters=(
+        --include './bin' --include './etc/pacman*' --include './lib*'
+        --include './usr/bin' --include './usr/lib/getconf'
+        --include './usr/lib/*.so*' --include './usr/share/makepkg'
+        --exclude './etc/pacman.d/gnupg/*'
+    )
+    if [[ "${created['root.tar']:-}" ]]; then
+        eval "${log_info}" || echo 'Reusing root.tar created in the same run...'
+        bsdtar --acls --xattrs -cpf "${path_out}.temp" "${filters[@]}" \
+            "@${out_prefix}root.tar"
     else
-        eval "${log_error}" || echo \
-            'Partition table does not contain boot partition:'
-        echo "${table}"
-        return 1
+        bsdtar --acls --xattrs -cp -C "${path_root}" \
+            --exclude './dev' --exclude './mnt' --exclude './proc' \
+            --exclude './sys' --exclude './etc/pacman.d/gnupg/*' \
+            . |
+            bsdtar --acls --xattrs -cpf "${path_out}.temp" "${filters[@]}" '@-'
     fi
-    eval "${log_info}" || echo 'Creating part-boot.img...'
-}
-
-create_part_home_img() {
-    local part_info
-    if part_info=$(grep '^name=[^,]*[hH][oO][mM][eE],' <<< "${table}");
-    then
-        eval "${log_info}" || echo \
-            "Creating part-home.img according to the following partition info:"\
-            "${part_info}"
-    else
-        eval "${log_error}" || echo \
-            'Partition table does not contain home partition:'
-        echo "${table}"
-        return 1
-    fi
-    eval "${log_info}" || echo 'Creating part-home.img...'
+    mv "${path_out}"{.temp,}
+    created['keyring-helper.tar']='y'
+    eval "${log_info}" || echo "Created keyring helper '${path_out}'"
 }
 
 create_disk_img() {
@@ -1639,7 +1685,7 @@ help_aimager() {
         'async-child' 'use always the async way to unshare and wait for child (basically unshare in a background job and we map in main Bash instance then wait), instead of trying to use the sync way to unshare and wait for child (basically unshare itself does the mapping and we call it in a blocking way) when unshare is new enough and async otherwise' \
         'freeze-pacman-config' 'do not re-generate ${path_etc}/pacman-loose.conf and ${path_etc}/pacman-strict.conf from repo' \
         'freeze-pacman-static' 'for hosts that do not have system-provided pacman, do not update pacman-static online if we already downloaded it previously; this is strongly NOT recommended UNLESS you are doing continuous builds and re-using the same cache' \
-        'keyring-helper [archive]' 'borrow keyring managers (pacman-key, gpg and other crypt libs) from a previously created root archive, native arch is the best, used during keyring initialization to avoid the bottleneck caused by calling gpg via QEMU. it is recommended to always use this if you are cross-building and the qemu-based gpg from target architecture runs too slow. currently the whole root archive would be extracted to sub /mnt, so use in caution when in combination with --tmpfs-root'\
+        'keyring-helper [archive]' 'borrow keyring managers (pacman-key, gpg and other crypt libs) from a previously created root archive, or a helper-only archive created with `--create keyring-helper.tar`, native arch is the best, used during keyring initialization to avoid the bottleneck caused by calling gpg via QEMU. it is recommended to always use this if you are cross-building and the qemu-based gpg from target architecture runs too slow. currently the whole root archive would be extracted to sub /mnt, so use in caution when in combination with --tmpfs-root'\
         'tmpfs-root(=[options])' 'mount a tmpfs to root, instead of bind-mounting, pass only --tmpfs-root to use default mount options, pass --tmpfs-root=[options] to overwrite the tmpfs mounting options' \
         'use-pacman-static' 'always use pacman-static, even if we found pacman in PATH, mainly for debugging. if this is not set (default) then pacman-static would only be downloaded and used when we cannot find pacman'\
 
@@ -1647,7 +1693,7 @@ help_aimager() {
     printf -- "${formatter}" \
         'binfmt-check' 'run a binfmt check for the target architecture after configuring and early quit' \
         'clean-builds' 'clean builds and early quit'\
-        'create [target]' 'create a certain target, artifact would be [out-prefix][target], can be specified multiple times, pass "help" to check for allowed to-be-created target, a built-in target root.tar would always be created whether you set it or not'\
+        'create [target]' 'create a certain target, artifact would be [out-prefix][target], can be specified multiple times, pass "help" to check for allowed to-be-created target, it is recommended to build always root.tar if possible'\
         'help' 'print this help message' \
         'only-backup-keyring' 'bootstrap, init and populate the keyring, backup, then early quit'\
         'only-prepare-child' 'early exit before spawning child, mainly for debugging' \
