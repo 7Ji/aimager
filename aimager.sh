@@ -1272,38 +1272,12 @@ child_init_bootstrap() {
             "need to initialize the keyring..."
         child_init_keyring
     fi
-}
-
-child_init_bootstrap_old() {
-    local keyring_id="${distro_safe}" bootstrap_pkg
-    local keyring_pkgs
-    for bootstrap_pkg in $(
-        printf '%s\n' "${bootstrap_pkgs[@]}" |
-            grep 'keyring' |
-            sort |
-            uniq
-    ); do
-        keyring_id+="+${bootstrap_pkg}"
-    done
-    local keyring_archive=cache/keyring/"${keyring_id}".tar
-    local path_keyring="${path_root}/etc/pacman.d/gnupg"
-    local config
-    if [[ -f "${keyring_archive}" ]]; then
-        eval "${log_info}" || echo \
-            "Reusing keyring archive '${keyring_archive}'..."
-        mkdir -p "${path_keyring}"
-        bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"
-        config="${path_etc}/pacman-strict.conf"
-    else
-        eval "${log_warn}" || echo \
-            "This seems our first attempt to install for ${keyring_id},"\
-            "using loose pacman config and would not go back to verify the"\
-            "bootstrap packages. It is recommended to rebuild after this try!"
-        config="${path_etc}/pacman-loose.conf"
-    fi
-    pacman -Sy --config "${config}" --noconfirm "${bootstrap_pkgs[@]}"
-    child_check_binfmt
-    child_init_keyring
+    eval "${log_info}" || echo "Going back to verify bootstrap packages..."
+    pacman -S --config "${path_etc}/pacman-strict.conf" \
+        --downloadonly --noconfirm \
+        $(
+            pacman -Q --config "${path_etc}/pacman-loose.conf" | cut -d ' ' -f 1
+        )
 }
 
 child_init() {
