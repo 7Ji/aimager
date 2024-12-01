@@ -1244,6 +1244,56 @@ child_init_keyring() {
     mv "${keyring_archive}"{.temp,}
 }
 
+# This can only be done AFTER keyrings installed, need to swap order around
+child_init_bootstrap_faster_yet_later() {
+    local keyring_id= keyring_pkg
+    for keyring_pkg in  $(
+        cd "${path_root}"/var/lib/pacman/local
+        grep -l '^usr/share/pacman/keyrings/.\+' */files
+    ); do
+        keyring_pkg="${keyring_pkg%/files}"
+        if [[ "${keyring_id}" ]]; then
+            keyring_id+="+${keyring_pkg}"
+        else
+            keyring_id="${keyring_pkg}"
+        fi
+    done
+    if (( "${#keyring_id}" > 251)); then
+        if [[ "$(type -t xxh64sum)" == 'file' ]]; then
+            local keyring_hash=$(xxh64sum <<< "${keyring_id}")
+            keyring_id="xxh64-${keyring_hash::16}-${keyring_id::225}+++"
+        elif [[ "$(type -t md5sum)" == 'file' ]]; then
+            local keyring_hash=$(md5sum <<< "${keyring_id}")
+            keyring_id="md5-${keyring_hash::32}-${keyring_id::211}+++"
+        else
+            eval "${log_error}" || echo \
+                "Keyring ID '${keyring_id}' too long and failed to find"\
+                "xxh64sum or md5sum to shorten it"
+            return 1
+        fi
+    fi
+    eval "${log_info}" || echo "Keyring ID is ${keyring_id}"
+    local keyring_archive=cache/keyring/"${keyring_id}".tar
+    local config
+    if [[ -f "${keyring_archive}" ]]; then
+        eval "${log_info}" || echo \
+            "Reusing keyring archive '${keyring_archive}'..."
+        local path_keyring="${path_root}/etc/pacman.d/gnupg"
+        mkdir -p "${path_keyring}"
+        bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"
+        config="${path_etc}/pacman-strict.conf"
+    else
+        eval "${log_warn}" || echo \
+            "This seems our first attempt to install for ${keyring_id},"\
+            "using loose pacman config and would not go back to verify the"\
+            "bootstrap packages. It is recommended to rebuild after this try!"
+        config="${path_etc}/pacman-loose.conf"
+    fi
+    pacman -Sy --config "${config}" --noconfirm "${bootstrap_pkgs[@]}"
+    child_check_binfmt
+    child_init_keyring
+}
+
 child_init_bootstrap() {
     local keyring_id="${distro_safe}" bootstrap_pkg
     local keyring_pkgs
