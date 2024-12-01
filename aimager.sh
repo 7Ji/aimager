@@ -149,6 +149,7 @@ check_executables() {
     check_executable_must_exist id 'to check for identity'
     check_executable_must_exist install 'install file to certain paths'
     check_executable_must_exist grep 'do text extraction'
+    check_executable_must_exist md5sum 'simple hashing'
     check_executable_must_exist newgidmap 'map group to root in child namespace'
     check_executable_must_exist newuidmap 'map user to root in child namespace'
     check_executable_must_exist readlink 'get stdout psuedo terminal path'
@@ -165,7 +166,7 @@ check_executables() {
     then
         use_pacman_static=1
         update_and_use_pacman_static
-    fi 
+    fi
     eval "${log_info}" || echo "Say hello to our hero Pacman O<. ."
     pacman --version
 }
@@ -1210,9 +1211,11 @@ child_init_keyring() {
                     'keyring managers from it'
                 return 1
             fi
-            mkdir -p "${path_root}"/{etc/pacman.d/gnupg,usr/share/pacman/keyrings,mnt/{dev,proc}}
+            mkdir -p "${path_root}"/{etc/pacman.d/gnupg,usr/share/pacman/keyrings,mnt/{dev,proc,usr/share/pacman/keyrings}}
             bsdtar --acls --xattrs -xpf "${keyring_helper}" \
-                -C "${path_root}/mnt"
+                -C "${path_root}/mnt" \
+                'bin' 'etc/pacman*' 'lib*' \
+                'usr/bin' 'usr/lib/getconf' 'usr/lib/*.so*' 'usr/share/makepkg'
             mount -o bind "${path_root}"{,/mnt}/dev
             mount -o bind "${path_root}"{,/mnt}/proc
             mount -o bind "${path_root}"{,/mnt}/etc/pacman.d/gnupg
@@ -1245,56 +1248,33 @@ child_init_keyring() {
 }
 
 # This can only be done AFTER keyrings installed, need to swap order around
-child_init_bootstrap_faster_yet_later() {
-    local keyring_id= keyring_pkg
-    for keyring_pkg in  $(
-        cd "${path_root}"/var/lib/pacman/local
-        grep -l '^usr/share/pacman/keyrings/.\+' */files
-    ); do
-        keyring_pkg="${keyring_pkg%/files}"
-        if [[ "${keyring_id}" ]]; then
-            keyring_id+="+${keyring_pkg}"
-        else
-            keyring_id="${keyring_pkg}"
-        fi
-    done
-    if (( "${#keyring_id}" > 251)); then
-        if [[ "$(type -t xxh64sum)" == 'file' ]]; then
-            local keyring_hash=$(xxh64sum <<< "${keyring_id}")
-            keyring_id="xxh64-${keyring_hash::16}-${keyring_id::225}+++"
-        elif [[ "$(type -t md5sum)" == 'file' ]]; then
-            local keyring_hash=$(md5sum <<< "${keyring_id}")
-            keyring_id="md5-${keyring_hash::32}-${keyring_id::211}+++"
-        else
-            eval "${log_error}" || echo \
-                "Keyring ID '${keyring_id}' too long and failed to find"\
-                "xxh64sum or md5sum to shorten it"
-            return 1
-        fi
-    fi
+child_init_bootstrap() {
+    pacman -Sy --config "${path_etc}/pacman-loose.conf" \
+        --noconfirm "${bootstrap_pkgs[@]}"
+    child_check_binfmt
+    local keyring_id=$(
+        tar --directory "${path_root}/usr/share/pacman/keyrings" --owner root \
+            --group root --mtime 1970-01-01 --create . |
+            md5sum
+    )
+    keyring_id="md5-${keyring_id::32}"
     eval "${log_info}" || echo "Keyring ID is ${keyring_id}"
     local keyring_archive=cache/keyring/"${keyring_id}".tar
-    local config
+    local path_keyring="${path_root}/etc/pacman.d/gnupg"
     if [[ -f "${keyring_archive}" ]]; then
         eval "${log_info}" || echo \
-            "Reusing keyring archive '${keyring_archive}'..."
-        local path_keyring="${path_root}/etc/pacman.d/gnupg"
+            "Reusing keyring backup archive '${keyring_archive}'..."
         mkdir -p "${path_keyring}"
         bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"
-        config="${path_etc}/pacman-strict.conf"
     else
         eval "${log_warn}" || echo \
             "This seems our first attempt to install for ${keyring_id},"\
-            "using loose pacman config and would not go back to verify the"\
-            "bootstrap packages. It is recommended to rebuild after this try!"
-        config="${path_etc}/pacman-loose.conf"
+            "need to initialize the keyring..."
+        child_init_keyring
     fi
-    pacman -Sy --config "${config}" --noconfirm "${bootstrap_pkgs[@]}"
-    child_check_binfmt
-    child_init_keyring
 }
 
-child_init_bootstrap() {
+child_init_bootstrap_old() {
     local keyring_id="${distro_safe}" bootstrap_pkg
     local keyring_pkgs
     for bootstrap_pkg in $(
