@@ -1288,15 +1288,6 @@ child_init() {
     fi
 }
 
-child_initrd_set_universal_booster() {
-    echo 'universal: true' > "${path_root}/etc/booster.yaml"
-}
-
-child_initrd_set_universal_mkinitcpio() {
-    sed -i "s/^PRESETS=.\+/PRESETS=('fallback')/" \
-        "${path_root}/usr/share/mkinitcpio/hook.preset"
-}
-
 child_initrd_set_universal_dracut() {
     eval "${log_fatal}" || echo 'Not implemented yet'
     return 1
@@ -1314,11 +1305,14 @@ child_setup_initrd_maker() {
     pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
         "${initrd_maker}"
     case "${initrd_maker}" in
-    'booster'|'')
-        child_initrd_set_universal_booster
+    'booster')
+        cp "${path_root}/etc/booster.yaml"{,.pacsave}
+        echo 'universal: true' > "${path_root}/etc/booster.yaml"
         ;;
     'mkinitcpio')
-        child_initrd_set_universal_mkinitcpio
+        cp "${path_root}/usr/share/mkinitcpio/hook.preset"{,.pacsave}
+        sed -i "s/^PRESETS=.\+/PRESETS=('fallback')/" \
+            "${path_root}/usr/share/mkinitcpio/hook.preset"
         ;;
     'dracut')
         child_initrd_set_universal_dracut
@@ -1327,6 +1321,28 @@ child_setup_initrd_maker() {
         eval "${log_error}" || echo \
             "Unknown initrd maker ${initrd_maker}, it could only be one of the"\
             'following: booster, mkinitcpio, dracut'
+            return 1
+        ;;
+    esac
+}
+
+child_revert_initrd_maker() {
+    case "${initrd_maker}" in
+    'booster')
+        mv "${path_root}/etc/booster.yaml"{.pacsave,}
+        ;;
+    'mkinitcpio')
+        mv "${path_root}/usr/share/mkinitcpio/hook.preset"{.pacsave,}
+        local preset kernel
+        for preset in "${path_root}"/etc/mkinitcpio.d/*.preset; do
+            kernel="${preset##*/}"
+            kernel="${kernel%.preset}"
+            sed "s|%PKGBASE%|${kernel}|g" \
+                "${path_root}/usr/share/mkinitcpio/hook.preset" > "${preset}"
+        done
+        ;;
+    'dracut')
+        child_initrd_set_universal_dracut
         ;;
     esac
 }
@@ -1343,6 +1359,7 @@ child_setup() {
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
             --needed "${install_pkgs[@]}"
     fi
+    child_revert_initrd_maker
     if [[ "${pacman_conf_append}" ]]; then
         echo "${pacman_conf_append}" >> "${path_root}/etc/pacman.conf"
     fi
