@@ -255,15 +255,14 @@ cache_repo_pkg() {
         return 1
     fi
     pkg_ver=
-    local filename= name=
-    local i=0
-    for name in "${names[@]}"; do
+    local filename= name= i=0
+    for i in "${!names[@]}"; do
+        name="${names[$i]}"
         if [[ "${name}" == "$5" ]]; then
             filename="${filenames[$i]}"
             pkg_ver="${versions[$i]}"
             break
         fi
-        i=$(( $i + 1 ))
     done
     if [[ "${name}" == "$5" ]] && 
         [[ "${filename}" ]] && 
@@ -913,6 +912,65 @@ configure_out() {
     fi
 }
 
+size_mb_from_sector_or_human_readable() {
+    local size="${1,,}"
+    local multiply=1
+    case "${size}" in
+    *ib)
+        multiply=1024
+        size="${size::-2}"
+        ;;
+    *b)
+        multiply=1000
+        size="${size::-1}"
+        ;;
+    esac
+    case "${size: -1}" in
+    k)
+        multiply=$(( "${multiply}" * 1024 ))
+        size="${size::-1}"
+        ;;
+    m)
+        multiply=$(( "${multiply}" * 1048576 ))
+        size="${size::-1}"
+        ;;
+    g)
+        multiply=$(( "${multiply}" * 1073741824 ))
+        size="${size::-1}"
+        ;;
+    t)
+        multiply=$(( "${multiply}" * 1099511627776 ))
+        size="${size::-1}"
+        ;;
+    p)
+        multiply=$(( "${multiply}" * 1125899906842624 ))
+        size="${size::-1}"
+        ;;
+    e)
+        multiply=$(( "${multiply}" * 1152921504606846976 ))
+        size="${size::-1}"
+        ;;
+    0|1|2|3|4|5|6|7|8|9)
+        multiply=$(( "${multiply}" * 512))
+        ;;
+    *)
+        {
+            eval "${log_error}" || echo "Unknown suffix ${size: -1}"
+        } >&2
+        return 1
+        ;;
+    esac
+    echo $(( ( "${size}" * "${multiply}" + 1048575) / 1048576 ))
+}
+
+size_mb_extract_from_sfdisk_part() { #1: line, 2: name (size/offset)
+    local size=$(echo "$1" | sed -n \
+        's/^\(.\+,\)\? *'"$2"'= *\([0-9]\+\([KkMmGgTtPpEeZzYy]\(i\?[Bb]\)\?\)\?\)\(,.*\)\?$/\2/p')
+    if [[ "${size}" ]]; then
+        size_mb_from_sector_or_human_readable "${size}"
+    fi
+}
+
 configure_table() {
     eval "${log_info}" || echo 'Configuring partition table...'
     case "${table}" in
@@ -944,11 +1002,54 @@ configure_table() {
         echo "Using the following partition table:"
         echo "${table}"
     fi
-}
+    table_part_orders=()
+    declare -gA table_part_names
+    declare -gA table_part_infos
+    declare -gA table_part_sizes
+    declare -gA table_part_offsets
+    declare -gA table_part_types
+    local line part_order part_name part_info
+    while read line; do
+        [[ "${line,,}" =~ ^name=[^,]*(boot|root|home|swap), ]] || continue
+        part_name="${line:5}"
+        part_name="${part_name%%,*}"
+        if [[ ${part_name} =~ '"'*'"' ]]; then
+            part_name="${part_name:1:-1}"
+        fi
+        part_order="${part_name: -4}"
+        part_order="${part_order,,}"
+        if [[ " ${table_part_orders[*]} " == *" ${part_order} "* ]]; then
+            eval "${log_error}" || echo \
+                "Duplicated part definition for ${part_order}"
+            return 1
+        fi
+        table_part_orders+=("${part_order}")
+        part_info="${line#*,}"
+        table_part_names["${part_order}"]="${part_name}"
+        table_part_sizes["${part_order}"]=$(
+            size_mb_extract_from_sfdisk_part "${part_info}" 'size')
+        table_part_offsets["${part_order}"]=$(
+            size_mb_extract_from_sfdisk_part "${part_info}" 'offset')
+        table_part_types["${part_order}"]=$(echo "${part_info}" | sed -n \
+            's/^.\+, *type= *\([^,]\+\)\(,.*\)\?$/\1/p')
+        table_part_infos["${part_order}"]="${line#*,}"
+    done <<< "${table}"
+    if ! eval "${log_info}"; then
+        echo "Parsed partition tables:"
+        local i
+        for i in "${!table_part_orders[@]}"; do
+            part_order="${table_part_orders[$i]}"
+            printf '%02d: %4s, name %16s, size %6dM, offset %6dM, type %36s, info %s\n' \
+                "${i}" "${part_order}" \
+                "\"${table_part_names["${part_order}"]}\"" \
+                "${table_part_sizes["${part_order}"]}" \
+                "${table_part_offsets["${part_order}"]}" \
+                "${table_part_types["${part_order}"]}" \
+                "${table_part_infos["${part_order}"]}" \
 
-# configure_initrd_maker() {
-#     initrd_maker="${initrd_maker:-booster}"
-# }
+        done
+    fi
+}
 
 configure_pkgs() {
     local pkgs_allowed=()
