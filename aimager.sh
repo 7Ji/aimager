@@ -1750,21 +1750,18 @@ create_part_root_img() {
     eval "${log_info}" || echo "Created root partition image '${path_out}'"
 }
 
-# create_part_home_img() {
-#     local part_info
-#     if part_info=$(grep '^name=[^,]*[hH][oO][mM][eE],' <<< "${table}");
-#     then
-#         eval "${log_info}" || echo \
-#             "Creating part-home.img according to the following partition info:"\
-#             "${part_info}"
-#     else
-#         eval "${log_error}" || echo \
-#             'Partition table does not contain home partition:'
-#         echo "${table}"
-#         return 1
-#     fi
-#     eval "${log_info}" || echo 'Creating part-home.img...'
-# }
+create_part_home_img() {
+    if [[ "${created['part-home.img']:-}" ]]; then
+        return
+    fi
+    local path_out="${out_prefix}part-home.img"
+    eval "${log_info}" || echo "Creating home partition image '${path_out}'..."
+    truncate -s "${table_part_sizes[home]}"M "${path_out}.temp"
+    mkfs.ext4 -d "${path_root}/home" ${mkfs_args[home]:-} "${path_out}.temp"
+    mv "${path_out}"{.temp,}
+    created['part-home.img']='y'
+    eval "${log_info}" || echo "Created home partition image '${path_out}'"
+}
 
 create_root_tar() {
     if [[ "${created['root.tar']:-}" ]]; then
