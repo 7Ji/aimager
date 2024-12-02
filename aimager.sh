@@ -118,6 +118,7 @@ check_executables() {
     check_executable bsdtar 'pack root into archive'
     check_executable curl 'download files from Internet'
     check_executable date 'check current time'
+    check_executable dd 'disk image manuplication'
     check_executable id 'to check for identity'
     check_executable install 'install file to certain paths'
     check_executable grep 'do text extraction'
@@ -951,20 +952,6 @@ configure_table() {
         fi
         table_part_infos["${part_order}"]="${line#*,}"
     done <<< "${table}"
-    if ! eval "${log_info}"; then
-        echo "Parsed partition tables:"
-        local i
-        for i in "${!table_part_orders[@]}"; do
-            part_order="${table_part_orders[$i]}"
-            printf '%02d: %4s, name %16s, size %6dM, offset %6dM, type %36s\n' \
-                "${i}" "${part_order}" \
-                "\"${table_part_names["${part_order}"]}\"" \
-                "${table_part_sizes["${part_order}"]}" \
-                "${table_part_offsets["${part_order}"]}" \
-                "\"${table_part_types["${part_order}"]}\"" \
-
-        done
-    fi
     if $(grep -q '^label: *gpt$' <<< "${table}"); then
         table_label=gpt
         local table_preserve_lbas=33
@@ -987,10 +974,10 @@ configure_table() {
         part_end_last=$(( ("${part_end_last:-2048}" * 512 + 1048575) / 1048576))
         local part_end_this
         for part_order in "${table_part_orders[@]}"; do
-            # part_order="${table_part_orders[$i]}"
+            table_part_offsets["${part_order}"]="${table_part_offsets["${part_order}"]:-"${part_end_last}"}"
             part_end_this=$((
                 "${table_part_sizes["${part_order}"]:-0}" +
-                "${table_part_offsets["${part_order}"]:-"${part_end_last}"}"
+                "${table_part_offsets["${part_order}"]}"
             ))
             if (( "${part_end_this}" > "${part_end_last}" )); then
                 part_end_last="${part_end_this}"
@@ -1004,6 +991,20 @@ configure_table() {
     fi
     eval "${log_info}" || echo \
         "Table needs to be created on a disk with size at least ${table_size}M"
+    if ! eval "${log_info}"; then
+        echo "Parsed partition tables:"
+        local i
+        for i in "${!table_part_orders[@]}"; do
+            part_order="${table_part_orders[$i]}"
+            printf '%02d: %4s, name %16s, size %6dM, offset %6dM, type %36s\n' \
+                "${i}" "${part_order}" \
+                "\"${table_part_names["${part_order}"]}\"" \
+                "${table_part_sizes["${part_order}"]}" \
+                "${table_part_offsets["${part_order}"]}" \
+                "\"${table_part_types["${part_order}"]}\"" \
+
+        done
+    fi
 }
 
 configure_pkgs() {
@@ -1655,6 +1656,25 @@ create_part_home_img() {
     eval "${log_info}" || echo "Created home partition image '${path_out}'"
 }
 
+create_disk_img() {
+    if [[ "${created['disk.img']:-}" ]]; then
+        return
+    fi
+    local path_out="${out_prefix}disk.img"
+    eval "${log_info}" || echo "Creating disk image '${path_out}'..."
+    truncate -s "${table_size}"M "${path_out}".temp
+    local part_order
+    sfdisk "${path_out}".temp <<< "${table}"
+    for part_order in "${table_part_orders[@]}"; do
+        create_part_"${part_order}"_img
+        dd if="${out_prefix}part-${part_order}.img" of="${path_out}.temp" \
+            bs=1M seek="${table_part_offsets["${part_order}"]}" conv=notrunc
+    done
+    mv "${path_out}"{.temp,}
+    created['part-home.img']='y'
+    eval "${log_info}" || echo "Created home partition image '${path_out}'"
+}
+
 create_root_tar() {
     if [[ "${created['root.tar']:-}" ]]; then
         return
@@ -1696,10 +1716,6 @@ create_keyring_helper_tar() {
     mv "${path_out}"{.temp,}
     created['keyring-helper.tar']='y'
     eval "${log_info}" || echo "Created keyring helper '${path_out}'"
-}
-
-create_disk_img() {
-    :
 }
 
 help_create() {
