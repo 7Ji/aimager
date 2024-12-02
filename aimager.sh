@@ -1710,6 +1710,9 @@ aimager() {
 # }
 
 create_part_boot_img() {
+    if [[ "${created['part-boot.img']:-}" ]]; then
+        return
+    fi
     local path_out="${out_prefix}part-boot.img"
     eval "${log_info}" || echo "Creating boot partition image '${path_out}'..."
     truncate -s "${table_part_sizes[boot]}"M "${path_out}.temp"
@@ -1718,6 +1721,33 @@ create_part_boot_img() {
     mv "${path_out}"{.temp,}
     created['part-boot.img']='y'
     eval "${log_info}" || echo "Created boot partition image '${path_out}'"
+}
+
+create_part_root_img() {
+    if [[ "${created['part-root.img']:-}" ]]; then
+        return
+    fi
+    local path_out="${out_prefix}part-root.img"
+    eval "${log_info}" || echo "Creating root partition image '${path_out}'..."
+    truncate -s "${table_part_sizes[root]}"M "${path_out}.temp"
+    local shadow
+    local shadows=(dev mnt proc sys)
+    if [[ "${table_part_sizes[boot]:-}" ]]; then
+        shadows+=(boot)
+    fi
+    if [[ "${table_part_sizes[home]:-}" ]]; then
+        shadows+=(home)
+    fi
+    for shadow in "${shadows[@]}"; do
+        mount -t tmpfs shadow-"${shadow}" "${path_root}/${shadow}"
+    done
+    mkfs.ext4 -d "${path_root}" ${mkfs_args[root]:-} "${path_out}.temp"
+    for shadow in "${shadows[@]}"; do
+        umount "${path_root}/${shadow}"
+    done
+    mv "${path_out}"{.temp,}
+    created['part-root.img']='y'
+    eval "${log_info}" || echo "Created root partition image '${path_out}'"
 }
 
 # create_part_home_img() {
@@ -1737,6 +1767,9 @@ create_part_boot_img() {
 # }
 
 create_root_tar() {
+    if [[ "${created['root.tar']:-}" ]]; then
+        return
+    fi
     local path_out="${out_prefix}root.tar"
     eval "${log_info}" || echo "Creating root archive '${path_out}'..."
     bsdtar --acls --xattrs -cpf "${path_out}.temp" -C "${path_root}" \
@@ -1749,6 +1782,9 @@ create_root_tar() {
 }
 
 create_keyring_helper_tar() {
+    if [[ "${created['keyring-helper.tar']:-}" ]]; then
+        return
+    fi
     local path_out="${out_prefix}keyring-helper.tar"
     eval "${log_info}" || echo "Creating keyring helper '${path_out}'..."
     local filters=(
