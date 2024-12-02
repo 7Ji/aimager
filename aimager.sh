@@ -1008,12 +1008,12 @@ configure_table() {
     declare -gA table_part_sizes
     declare -gA table_part_offsets
     declare -gA table_part_types
-    local line part_order part_name part_info
+    local line part_order part_name part_info part_type
     while read line; do
         [[ "${line,,}" =~ ^name=[^,]*(boot|root|home|swap), ]] || continue
         part_name="${line:5}"
         part_name="${part_name%%,*}"
-        if [[ ${part_name} =~ '"'*'"' ]]; then
+        if [[ "${part_name}" == '"'*'"' ]]; then
             part_name="${part_name:1:-1}"
         fi
         part_order="${part_name: -4}"
@@ -1030,8 +1030,14 @@ configure_table() {
             size_mb_extract_from_sfdisk_part "${part_info}" 'size')
         table_part_offsets["${part_order}"]=$(
             size_mb_extract_from_sfdisk_part "${part_info}" 'offset')
-        table_part_types["${part_order}"]=$(echo "${part_info}" | sed -n \
+        part_type=$(echo "${part_info}" | sed -n \
             's/^.\+, *type= *\([^,]\+\)\(,.*\)\?$/\1/p')
+
+        if [[ "${part_type}" == '"'*'"' ]]; then
+            table_part_types["${part_order}"]="${part_type:1:-1}"
+        else
+            table_part_types["${part_order}"]="${part_type}"
+        fi
         table_part_infos["${part_order}"]="${line#*,}"
     done <<< "${table}"
     if ! eval "${log_info}"; then
@@ -1044,7 +1050,7 @@ configure_table() {
                 "\"${table_part_names["${part_order}"]}\"" \
                 "${table_part_sizes["${part_order}"]}" \
                 "${table_part_offsets["${part_order}"]}" \
-                "${table_part_types["${part_order}"]}" \
+                "\"${table_part_types["${part_order}"]}\"" \
 
         done
     fi
