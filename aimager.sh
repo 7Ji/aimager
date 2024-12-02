@@ -1039,16 +1039,54 @@ configure_table() {
         local i
         for i in "${!table_part_orders[@]}"; do
             part_order="${table_part_orders[$i]}"
-            printf '%02d: %4s, name %16s, size %6dM, offset %6dM, type %36s, info %s\n' \
+            printf '%02d: %4s, name %16s, size %6dM, offset %6dM, type %36s\n' \
                 "${i}" "${part_order}" \
                 "\"${table_part_names["${part_order}"]}\"" \
                 "${table_part_sizes["${part_order}"]}" \
                 "${table_part_offsets["${part_order}"]}" \
                 "${table_part_types["${part_order}"]}" \
-                "${table_part_infos["${part_order}"]}" \
 
         done
     fi
+    if $(grep -q '^label: *gpt$' <<< "${table}"); then
+        table_label=gpt
+        local table_preserve_lbas=33
+    else
+        table_label=dos
+        local table_preserve_lbas=0
+    fi
+    local last_lba=$(echo "${table}" | sed -n 's/^last-lba: \(.\+\)$/\1/p')
+    if [[ "${last_lba}" ]]; then
+        table_size=$(( 
+            (
+                ( 
+                    "${last_lba}" + "${table_preserve_lbas}" + 1 
+                ) * 512 + 1048575
+            ) / 1048576
+        ))
+    else
+        local part_end_last=$(
+            echo "${table}" | sed -n 's/^first-lba: \(.\+\)$/\1/p')
+        part_end_last=$(( ("${part_end_last:-2048}" * 512 + 1048575) / 1048576))
+        local part_end_this
+        for part_order in "${table_part_orders[@]}"; do
+            # part_order="${table_part_orders[$i]}"
+            part_end_this=$((
+                "${table_part_sizes["${part_order}"]:-0}" +
+                "${table_part_offsets["${part_order}"]:-"${part_end_last}"}"
+            ))
+            if (( "${part_end_this}" > "${part_end_last}" )); then
+                part_end_last="${part_end_this}"
+            fi
+        done
+        if [[ "${table_label}" == gpt ]]; then
+            table_size=$(( "${part_end_last}" + 1 ))
+        else
+            table_size="${part_end_last}"
+        fi
+    fi
+    eval "${log_info}" || echo \
+        "Table needs to be created on a disk with size at least ${table_size}M"
 }
 
 configure_pkgs() {
