@@ -93,36 +93,8 @@ aimager_init() {
     use_pacman_static=0
 }
 
-# check if an executable exists
-## $1: executable name
-## $2: hint
-## $3: missing callback
+# check_executable $1 to $2, fail if it do not exist
 check_executable() {
-    eval "${log_debug}" || echo "Checking executable $1"
-    local type_executable
-    if ! type_executable=$(type -t "$1"); then
-        eval "${log_error}" || echo \
-            "Could not find needed executable \"$1\"."\
-            "It's needed to $2."
-        "$3"
-        if ! type_executable=$(type -t "$1"); then
-            eval "${log_error}" || echo \
-                "Still could not find needed executable \"$1\" after"\
-                "callback \"$3\". It's needed to $2."
-            return 1
-        fi
-    fi
-    if [[ "${type_executable}" != 'file' ]]; then
-        eval "${log_error}" || echo \
-            "Needed executable \"${name_executable}\" exists in Bash context"\
-            "but it is a \"${type_executable}\" instead of a file."\
-            "It's needed to $2."
-        return 1
-    fi
-}
-
-# check_executable with pre-defined 'false' callback (break if non-existing)
-check_executable_must_exist() {
     eval "${log_debug}" || echo "Checking executable $1 (must exist)"
     local type_executable
     if ! type_executable=$(type -t "$1"); then
@@ -143,29 +115,28 @@ check_executable_must_exist() {
 }
 
 check_executables() {
-    # check_executable_must_exist awk 'advanced text substution'
-    check_executable_must_exist bsdtar 'pack root into archive'
-    check_executable_must_exist curl 'download files from Internet'
-    check_executable_must_exist date 'check current time'
-    check_executable_must_exist id 'to check for identity'
-    check_executable_must_exist install 'install file to certain paths'
-    check_executable_must_exist grep 'do text extraction'
-    check_executable_must_exist mcopy 'pre-populating fat fs'
-    check_executable_must_exist md5sum 'simple hashing'
-    check_executable_must_exist mkfs.fat 'creating FAT fs'
-    check_executable_must_exist newgidmap 'map group to root in child namespace'
-    check_executable_must_exist newuidmap 'map user to root in child namespace'
-    check_executable_must_exist readlink 'get stdout psuedo terminal path'
-    check_executable_must_exist sed 'do text substitution'
-    check_executable_must_exist sleep 'wait for jobs to complete'
-    check_executable_must_exist sort 'sort values'
-    check_executable_must_exist stat 'get file modification date'
-    check_executable_must_exist tar 'extract file from archives'
-    check_executable_must_exist uname 'dump machine architecture'
-    check_executable_must_exist uniq 'get unique values'
-    check_executable_must_exist unshare 'unshare child process'
+    check_executable bsdtar 'pack root into archive'
+    check_executable curl 'download files from Internet'
+    check_executable date 'check current time'
+    check_executable id 'to check for identity'
+    check_executable install 'install file to certain paths'
+    check_executable grep 'do text extraction'
+    check_executable mcopy 'pre-populating fat fs'
+    check_executable md5sum 'simple hashing'
+    check_executable mkfs.fat 'creating FAT fs'
+    check_executable newgidmap 'map group to root in child namespace'
+    check_executable newuidmap 'map user to root in child namespace'
+    check_executable readlink 'get stdout psuedo terminal path'
+    check_executable sed 'do text substitution'
+    check_executable sleep 'wait for jobs to complete'
+    check_executable sort 'sort values'
+    check_executable stat 'get file modification date'
+    check_executable tar 'extract file from archives'
+    check_executable uname 'dump machine architecture'
+    check_executable uniq 'get unique values'
+    check_executable unshare 'unshare child process'
     if (( "${use_pacman_static}" )) ||
-        ! check_executable_must_exist pacman 'install packages'
+        ! check_executable pacman 'install packages'
     then
         use_pacman_static=1
         update_and_use_pacman_static
@@ -417,46 +388,6 @@ prepare_pacman_conf() {
         "strict config at '${path_etc}/pacman-strict.conf'"
 }
 
-# get_architecture() { #1
-#     case "${architecture}" in
-#         auto|host|'')
-#             architecture=$(uname -m)
-#             local allowed_architecture
-#             for allowed_architecture in "${allowed_architectures[@]}"; do
-#                 [[ "${allowed_architecture}" == "${architecture}" ]] && return 0
-#             done
-#             eval "${log_error}" || echo \
-#                 "Auto-detected architecture '${architecture}' is not allowed "\
-#                 "for distro '${distro}'."\
-#                 "Allowed: ${allowed_architectures[*]}"
-#             return 1
-#             ;;
-#         *)
-#             architecture="${allowed_architectures[0]}"
-#             ;;
-#     esac
-# }
-
-# get_distro() {
-#     distro=$(source /etc/os-release; echo $NAME)
-#     local allowed_architectures=()
-#     case "${distro}" in
-#         'Arch Linux')
-#             allowed_architectures=(x86_64)
-#             ;;
-#         'Arch Linux ARM')
-#             allowed_architectures=(aarch64 armv7h)
-#             ;;
-#         'Loong Arch Linux')
-#             allowed_architectures=(loong64)
-#             ;;
-#         *)
-#             eval "${log_warn}" || echo \
-#                 "Unknown distro from /etc/os-release: ${distro}"
-#             ;;
-#     esac
-# }
-
 no_source() {
     eval "${log_fatal}" || echo \
         "Both 'source' and '.' are banned from aimager,"\
@@ -466,29 +397,6 @@ no_source() {
 source() { no_source; }
 .() { no_source; }
 board_none() { :; }
-
-# sector_from_maybe_size() {
-#     case "${1,,}" in
-#     *b)
-#         echo $(( "${1::-1}" / 512 ))
-#         ;;
-#     *k)
-#         echo $(( "${1::-1}" * 2 ))
-#         ;;
-#     *m)
-#         echo $(( "${1::-1}" * 2048 ))
-#         ;;
-#     *g)
-#         echo $(( "${1::-1}" * 2097152 ))
-#         ;;
-#     *t)
-#         echo $(( "${1::-1}" * 2147483648 ))
-#         ;;
-#     *)
-#         echo "$1"
-#         ;;
-#     esac
-# }
 
 table_gpt_header() {
     printf '%s:%s\n' \
@@ -1692,22 +1600,6 @@ aimager() {
     work
     eval "${log_info}" || echo 'aimager exiting!!'
 }
-
-# create_part_root_img() {
-#     local part_info
-#     if part_info=$(grep '^name=[^,]*[rR][oO][oO][tT],' <<< "${table}");
-#     then
-#         eval "${log_info}" || echo \
-#             "Creating part-root.img according to the following partition info:"\
-#             "${part_info}"
-#     else
-#         eval "${log_error}" || echo \
-#             'Partition table does not contain root partition:'
-#         echo "${table}"
-#         return 1
-#     fi
-#     eval "${log_info}" || echo 'Creating part-root.img...'
-# }
 
 create_part_boot_img() {
     if [[ "${created['part-boot.img']:-}" ]]; then
