@@ -73,6 +73,7 @@ aimager_init() {
     freeze_pacman_static=0
     initrd_maker=''
     install_pkgs=()
+    declare -gA mkfs_args
     out_prefix=''
     overlays=()
     pacman_conf_append=''
@@ -149,7 +150,9 @@ check_executables() {
     check_executable_must_exist id 'to check for identity'
     check_executable_must_exist install 'install file to certain paths'
     check_executable_must_exist grep 'do text extraction'
+    check_executable_must_exist mcopy 'pre-populating fat fs'
     check_executable_must_exist md5sum 'simple hashing'
+    check_executable_must_exist mkfs.fat 'creating FAT fs'
     check_executable_must_exist newgidmap 'map group to root in child namespace'
     check_executable_must_exist newuidmap 'map user to root in child namespace'
     check_executable_must_exist readlink 'get stdout psuedo terminal path'
@@ -1488,9 +1491,12 @@ child_setup_initrd_maker() {
 child_revert_initrd_maker() {
     case "${initrd_maker}" in
     'booster')
+        [[ -f "${path_root}/etc/booster.yaml.pacsave" ]] || return
         mv "${path_root}/etc/booster.yaml"{.pacsave,}
         ;;
     'mkinitcpio')
+        [[ -f "${path_root}/usr/share/mkinitcpio/hook.preset.pacsave" ]] || 
+            return
         mv "${path_root}/usr/share/mkinitcpio/hook.preset"{.pacsave,}
         local preset kernel
         for preset in "${path_root}"/etc/mkinitcpio.d/*.preset; do
@@ -1703,21 +1709,16 @@ aimager() {
 #     eval "${log_info}" || echo 'Creating part-root.img...'
 # }
 
-# create_part_boot_img() {
-#     local part_info
-#     if part_info=$(grep '^name=[^,]*[bB][oO][oO][tT],' <<< "${table}");
-#     then
-#         eval "${log_info}" || echo \
-#             "Creating part-boot.img according to the following partition info:"\
-#             "${part_info}"
-#     else
-#         eval "${log_error}" || echo \
-#             'Partition table does not contain boot partition:'
-#         echo "${table}"
-#         return 1
-#     fi
-#     eval "${log_info}" || echo 'Creating part-boot.img...'
-# }
+create_part_boot_img() {
+    local path_out="${out_prefix}part-boot.img"
+    eval "${log_info}" || echo "Creating boot partition image '${path_out}'..."
+    truncate -s "${table_part_sizes[boot]}"M "${path_out}.temp"
+    mkfs.fat ${mkfs_args[boot]:-} "${path_out}.temp"
+    mcopy -osi "${path_out}.temp" "${path_root}/boot/"* ::
+    mv "${path_out}"{.temp,}
+    created['part-boot.img']='y'
+    eval "${log_info}" || echo "Created boot partition image '${path_out}'"
+}
 
 # create_part_home_img() {
 #     local part_info
@@ -1822,6 +1823,7 @@ help_aimager() {
         'initrd-maker [maker]' 'initrd maker: booster(default)/mkinitcpio/dracut, initrd-maker is installed before all other packages after bootstrapping so aimager could config it to only build universal images, and it would only be installed if initramfs virtual package has no provider, that is, if you use --reuse-root to do incremental build then in most cases later --initrd-maker has no use. ' \
         'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
+        'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
 
@@ -1970,6 +1972,10 @@ aimager_cli() {
         '--install-pkgs')
             IFS=', ' read -r -a splitted <<< "$2"
             install_pkgs+=("${splitted[@]}")
+            shift
+            ;;
+        '--mkfs-arg')
+            mkfs_args["${2%%=*}"]="${2#*=}"
             shift
             ;;
         '--overlay')
