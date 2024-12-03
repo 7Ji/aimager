@@ -136,6 +136,7 @@ check_executables() {
     check_executable uname 'dump machine architecture'
     check_executable uniq 'get unique values'
     check_executable unshare 'unshare child process'
+    check_executable uuidgen 'generate partition ids'
     if (( "${use_pacman_static}" )) ||
         ! check_executable pacman 'install packages'
     then
@@ -920,7 +921,8 @@ configure_table() {
     declare -gA table_part_sizes
     declare -gA table_part_offsets
     declare -gA table_part_types
-    local line part_order part_order part_info part_type
+    declare -gA table_part_uuids
+    local line part_order part_order part_info part_type part_uuid
     while read line; do
         [[ "${line,,}" =~ ^aimager@(boot|root|home|swap): ]] || continue
         part_order="${line:8:4}"
@@ -943,6 +945,13 @@ configure_table() {
             table_part_types["${part_order}"]="${part_type}"
         fi
         table_part_infos["${part_order}"]="${part_info}"
+        part_uuid=$(uuidgen)
+        if [[ "${part_order}" == 'boot' ]]; then
+            part_uuid="${part_uuid::8}"
+            part_uuid="${part_uuid^^}"
+            part_uuid="${part_uuid::4}-${part_uuid:4}"
+        fi
+        table_part_uuids["${part_order}"]="${part_uuid}"
     done <<< "${table}"
     if $(grep -q '^label: *gpt$' <<< "${table}"); then
         table_label=gpt
@@ -986,12 +995,12 @@ configure_table() {
     if ! eval "${log_info}"; then
         echo "Parsed partitions that aimager needs to create:"
         for part_order in "${table_part_orders[@]}"; do
-            printf '%4s: size %6d MiB, offset %6d MiB, type %36s, raw: %s\n' \
+            printf '%4s: size %6d MiB, offset %6d MiB, type %36s, uuid: %s\n' \
                 "${part_order}" \
                 "${table_part_sizes["${part_order}"]}" \
                 "${table_part_offsets["${part_order}"]}" \
                 "\"${table_part_types["${part_order}"]}\"" \
-                "${table_part_infos["${part_order}"]}" \
+                "${table_part_uuids["${part_order}"]}" \
 
         done
     fi
@@ -1599,7 +1608,8 @@ create_part_boot_img() {
     local path_out="${out_prefix}part-boot.img"
     eval "${log_info}" || echo "Creating boot partition image '${path_out}'..."
     truncate -s "${table_part_sizes[boot]}"M "${path_out}.temp"
-    mkfs.fat ${mkfs_args[boot]:-} "${path_out}.temp"
+    mkfs.fat -i "${table_part_uuids[boot]::4}${table_part_uuids[boot]:5}" \
+        ${mkfs_args[boot]:-} "${path_out}.temp"
     mcopy -osi "${path_out}.temp" "${path_root}/boot/"* ::
     mv "${path_out}"{.temp,}
     created['part-boot.img']='y'
@@ -1624,7 +1634,8 @@ create_part_root_img() {
     for shadow in "${shadows[@]}"; do
         mount -t tmpfs shadow-"${shadow}" "${path_root}/${shadow}"
     done
-    mkfs.ext4 -d "${path_root}" ${mkfs_args[root]:-} "${path_out}.temp"
+    mkfs.ext4 -d "${path_root}" -U "${table_part_uuids[root]}" \
+        ${mkfs_args[root]:-} "${path_out}.temp"
     for shadow in "${shadows[@]}"; do
         umount "${path_root}/${shadow}"
     done
@@ -1640,7 +1651,8 @@ create_part_home_img() {
     local path_out="${out_prefix}part-home.img"
     eval "${log_info}" || echo "Creating home partition image '${path_out}'..."
     truncate -s "${table_part_sizes[home]}"M "${path_out}.temp"
-    mkfs.ext4 -d "${path_root}/home" ${mkfs_args[home]:-} "${path_out}.temp"
+    mkfs.ext4 -d "${path_root}/home" -U "${table_part_uuids[home]}" \
+        ${mkfs_args[home]:-} "${path_out}.temp"
     mv "${path_out}"{.temp,}
     created['part-home.img']='y'
     eval "${log_info}" || echo "Created home partition image '${path_out}'"
