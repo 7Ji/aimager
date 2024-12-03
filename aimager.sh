@@ -1795,13 +1795,13 @@ help_aimager() {
 report_wrong_arg() { # $1: prefix, $2 original args collapsed, $3: remaining args
     echo "$1 $2"
     local args_remaining_collapsed="${@:3}"
-    printf "%$(( ${#1} + ${#2} - ${#args_remaining_collapsed} ))s^"
-    local len="${#3}"
+    printf "%$(( ${#1} + ${#2} + 1 - ${#args_remaining_collapsed} ))s^"
+    local len="${#3} - 2"
     while (( $len )); do
         echo -n '~'
         let len--
     done
-    echo
+    echo '^'
 }
 
 aimager_cli() {
