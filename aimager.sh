@@ -414,7 +414,7 @@ table_mbr_header() {
 }
 
 table_part() { #1 name, 2 start, 3 size, 4 type, 5 suffix
-    echo -n "name=$1," # for mbr this does nothing, but we use it for marks
+    echo -n "aimager@$1:" # for mbr this does nothing, but we use it for marks
     if [[ "$2" ]]; then
         echo -n "start=$2,"
     fi
@@ -915,42 +915,34 @@ configure_table() {
         echo "${table}"
     fi
     table_part_orders=()
-    declare -gA table_part_names
+    # declare -gA table_part_names
     declare -gA table_part_infos
     declare -gA table_part_sizes
     declare -gA table_part_offsets
     declare -gA table_part_types
-    local line part_order part_name part_info part_type
+    local line part_order part_order part_info part_type
     while read line; do
-        [[ "${line,,}" =~ ^name=[^,]*(boot|root|home|swap), ]] || continue
-        part_name="${line:5}"
-        part_name="${part_name%%,*}"
-        if [[ "${part_name}" == '"'*'"' ]]; then
-            part_name="${part_name:1:-1}"
-        fi
-        part_order="${part_name: -4}"
-        part_order="${part_order,,}"
+        [[ "${line,,}" =~ ^aimager@(boot|root|home|swap): ]] || continue
+        part_order="${line:8:4}"
         if [[ " ${table_part_orders[*]} " == *" ${part_order} "* ]]; then
             eval "${log_error}" || echo \
                 "Duplicated part definition for ${part_order}"
             return 1
         fi
         table_part_orders+=("${part_order}")
-        part_info="${line#*,}"
-        table_part_names["${part_order}"]="${part_name}"
+        part_info="${line#*:}"
         table_part_sizes["${part_order}"]=$(
             size_mb_extract_from_sfdisk_part "${part_info}" 'size')
         table_part_offsets["${part_order}"]=$(
             size_mb_extract_from_sfdisk_part "${part_info}" 'offset')
         part_type=$(echo "${part_info}" | sed -n \
             's/^.\+, *type= *\([^,]\+\)\(,.*\)\?$/\1/p')
-
         if [[ "${part_type}" == '"'*'"' ]]; then
             table_part_types["${part_order}"]="${part_type:1:-1}"
         else
             table_part_types["${part_order}"]="${part_type}"
         fi
-        table_part_infos["${part_order}"]="${line#*,}"
+        table_part_infos["${part_order}"]="${part_info}"
     done <<< "${table}"
     if $(grep -q '^label: *gpt$' <<< "${table}"); then
         table_label=gpt
@@ -992,16 +984,14 @@ configure_table() {
     eval "${log_info}" || echo \
         "Table needs to be created on a disk with size at least ${table_size}M"
     if ! eval "${log_info}"; then
-        echo "Parsed partition tables:"
-        local i
-        for i in "${!table_part_orders[@]}"; do
-            part_order="${table_part_orders[$i]}"
-            printf '%02d: %4s, name %16s, size %6dM, offset %6dM, type %36s\n' \
-                "${i}" "${part_order}" \
-                "\"${table_part_names["${part_order}"]}\"" \
+        echo "Parsed partitions that aimager needs to create:"
+        for part_order in "${table_part_orders[@]}"; do
+            printf '%4s: size %6d MiB, offset %6d MiB, type %36s, raw: %s\n' \
+                "${part_order}" \
                 "${table_part_sizes["${part_order}"]}" \
                 "${table_part_offsets["${part_order}"]}" \
                 "\"${table_part_types["${part_order}"]}\"" \
+                "${table_part_infos["${part_order}"]}" \
 
         done
     fi
