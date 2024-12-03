@@ -406,23 +406,23 @@ table_gpt_header() {
 
 }
 
-table_mbr_header() {
+table_dos_header() {
     printf '%s:%s\n' \
-        label mbr \
+        label dos \
         sector-size 512 \
 
 }
 
 table_part() { #1 name, 2 start, 3 size, 4 type, 5 suffix
-    echo -n "aimager@$1:" # for mbr this does nothing, but we use it for marks
+    echo -n "aimager@$1:" # for dos this does nothing, but we use it for marks
     if [[ "$2" ]]; then
         echo -n "start=$2,"
     fi
     echo "size=$3,type=$4$5"
 }
 
-table_common_mbr_1g_esp() {
-    table_mbr_header
+table_common_dos_1g_esp() {
+    table_dos_header
     table_part boot '' 1G uefi ',bootable'
 }
 
@@ -441,13 +441,13 @@ table_common_gpt_1g_esp_16g_root_x86_64() {
     table_part root '' 16G '"Linux root (x86-64)"' ''
 }
 
-table_common_mbr_16g_root() {
-    table_mbr_header
+table_common_dos_16g_root() {
+    table_dos_header
     table_part root '' 16G linux ',bootable'
 }
 
-table_common_mbr_1g_esp_16g_root_aarch64() {
-    table_common_mbr_1g_esp
+table_common_dos_1g_esp_16g_root_aarch64() {
+    table_common_dos_1g_esp
     table_part root '' 16G 
 }
 
@@ -478,7 +478,7 @@ board_x86_legacy() {
     arch_target='i686'
     bootloader='syslinux'
     if [[ -z "${table:-}" ]]; then
-        table='=mbr_16g_root'
+        table='=dos_16g_root'
     fi
     initrd_maker="${initrd_maker:-booster}"
     install_pkgs+=('linux')
@@ -489,7 +489,7 @@ board_amlogic_s9xxx() {
     arch_target='aarch64'
     bootloader='u-boot'
     if [[ -z "${table:-}" ]]; then
-        table='=mbr_1g_esp_16g_root_aarch64'
+        table='=dos_1g_esp_16g_root_aarch64'
     fi
     initrd_maker="${initrd_maker:-booster}"
 }
@@ -887,7 +887,7 @@ configure_table() {
     eval "${log_info}" || echo 'Configuring partition table...'
     case "${table}" in
     '@'*)
-        eval "${log_info}" || echo \\
+        eval "${log_info}" || echo \
             "Reading sfdisk-dump-like from '${table:1}'..."
         table=$(<"${table:1}")
         ;;
@@ -1657,6 +1657,8 @@ create_disk_img() {
     sfdisk "${path_out}".temp <<< "${table}"
     for part_order in "${table_part_orders[@]}"; do
         create_part_"${part_order}"_img
+        eval "${log_info}" || echo \
+            "Writing partition ${part_order} into disk image '${path_out}'..."
         dd if="${out_prefix}part-${part_order}.img" of="${path_out}.temp" \
             bs=1M seek="${table_part_offsets["${part_order}"]}" conv=notrunc
     done
@@ -1756,7 +1758,7 @@ help_aimager() {
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
         'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
-        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =mbr_16g_root. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. note that for both mbr and gpt the name property for each partition is always needed and would be used by aimager to find certain partitions (boot ends with boot, root ends with root, swap ends with swap, home ends with home, all case-insensitive), even if that has no actual use on mbr tables' \
+        'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
