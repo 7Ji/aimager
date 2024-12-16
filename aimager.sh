@@ -24,6 +24,32 @@
 # indent is 4 spaces
 # wrap lines at 80 columns, unless the line ends with a long url
 
+log_inner() {
+    if [[ "${log_enabled[$1]}" ]]; then
+        echo "[${BASH_SOURCE##*/}:${1^^}] ${FUNCNAME[2]}@${BASH_LINENO[1]}: ${*:2}"
+    fi
+}
+
+log_debug() {
+    log_inner debug "$@"
+}
+
+log_info() {
+    log_inner info "$@"
+}
+
+log_warn() {
+    log_inner warn "$@"
+}
+
+log_error() {
+    log_inner error "$@"
+}
+
+log_fatal() {
+    log_inner fatal "$@"
+}
+
 # init shell options, and log macros
 aimager_init() { 
     # e: error and exit on non-zero return
@@ -31,32 +57,31 @@ aimager_init() {
     # pipefail: error if not a whole pipe is successful
     set -euo pipefail
     # log macros expansion
-    local log_common_start='echo -n "[${script_name}:'
-    local log_common_end='] ${FUNCNAME}@${LINENO}: " && false'
-    log_debug="${log_common_start}DEBUG${log_common_end}"
-    log_info="${log_common_start}INFO${log_common_end}"
-    log_warn="${log_common_start}WARN${log_common_end}"
-    log_error="${log_common_start}ERROR${log_common_end}"
-    log_fatal="${log_common_start}FATAL${log_common_end}"
-    local log_level="${AIMAGER_LOG_LEVEL:-info}"
-    case "${log_level,,}" in
+    declare -gA log_enabled=(
+        [debug]='y'
+        [info]='y'
+        [warn]='y'
+        [error]='y'
+        [fatal]='y'
+    )
+    case "${AIMAGER_LOG_LEVEL:-info}" in
     'info')
-        log_debug='true'
+        log_enabled[debug]=''
         ;;
     'warn')
-        log_debug='true'
-        log_info='true'
+        log_enabled[debug]=''
+        log_enabled[info]=''
         ;;
     'error')
-        log_debug='true'
-        log_info='true'
-        log_warn='true'
+        log_enabled[debug]=''
+        log_enabled[info]=''
+        log_enabled[warn]=''
         ;;
     'fatal')
-        log_debug='true'
-        log_info='true'
-        log_warn='true'
-        log_error='true'
+        log_enabled[debug]=''
+        log_enabled[info]=''
+        log_enabled[warn]=''
+        log_enabled[error]=''
         ;;
     esac
     # variables
@@ -87,7 +112,6 @@ aimager_init() {
     run_only_prepare_child=0
     run_clean_builds=0
     run_only_backup_keyring=0
-    script_name=aimager.sh
     table=''
     tmpfs_root_options=''
     use_pacman_static=0
@@ -95,17 +119,17 @@ aimager_init() {
 
 # check_executable $1 to $2, fail if it do not exist
 check_executable() {
-    eval "${log_debug}" || echo "Checking executable $1 (must exist)"
+    log_debug "Checking executable $1 (must exist)"
     local type_executable
     if ! type_executable=$(type -t "$1"); then
-        eval "${log_error}" || echo \
+        log_error \
             "Could not find needed executable \"$1\"."\
             "It's needed to $2."\
             "Refuse to continue."
         return 1
     fi
     if [[ "${type_executable}" != 'file' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Needed executable \"${name_executable}\" exists in Bash context"\
             "but it is a \"${type_executable}\" instead of a file."\
             "It's needed to $2."\
@@ -143,20 +167,20 @@ check_executables() {
         use_pacman_static=1
         update_and_use_pacman_static
     fi
-    eval "${log_info}" || echo "Say hello to our hero Pacman O<. ."
+    log_info "Say hello to our hero Pacman O<. ."
     pacman --version
 }
 
 check_date_locale() {
     if [[ -z "${time_start_aimager}" ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Start time was not recorded, please check your 'date' installation"
         return 1
     fi
     local actual_output="${LANG}$(LANG=C date -ud @0)"
     local expected_output='CThu Jan  1 00:00:00 UTC 1970'
     if [[ "${actual_output}" != "${expected_output}" ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Current locale was not in C or not correctly in C."\
             "Was expecting output of date command to be \"${expected_output}\""\
             "But it is actually \"${actual_output}\""
@@ -170,9 +194,9 @@ check_date_locale() {
 download() { # 1: url, 2: path, 3: mod
     rm -f "$2"{,.temp}
     echo -n | install -Dm"${3:-644}" /dev/stdin "$2".temp
-    eval "${log_info}" || echo "Downloading '$2' < '$1'"
+    log_info "Downloading '$2' < '$1'"
     curl -qgb "" -fL --retry 3 --retry-delay 3 -o "$2".temp "$1"
-    eval "${log_info}" || echo "Downloaded '$2' <= '$1'"
+    log_info "Downloaded '$2' <= '$1'"
     mv "$2"{.temp,}
 }
 
@@ -221,10 +245,10 @@ cache_repo_pkg() {
         (( ${#names[@]} == ${#versions[@]} )); then
         :
     else
-        eval "${log_error}" || echo \
+        log_error \
             "Dumped filenames (${#filenames[@]}), names (${#names[@]}) and"\
             "versions (${#versions[@]}) length not equal to each other"
-        eval "${log_debug}" || echo \
+        log_debug \
             "Dumped filesnames: ${filesnames[*]};"\
             "Dumped names: ${names[*]};"\
             "Dumped versions: ${versions[*]}"
@@ -246,17 +270,17 @@ cache_repo_pkg() {
     then
         :
     else
-        eval "${log_error}" || echo \
+        log_error \
             "Failed to get package '$5' of arch '$4' from repo '$2$3' at '$1'"
         return 1
     fi
-    eval "${log_info}" || echo \
+    log_info \
         "Latest '$5' of arch '$4' from repo '$2$3' at '$1'"\
         "is at version '${pkg_ver}'"
     pkg_filename="$2$3:$4:${filename}"
     pkg_path=cache/pkg/"${pkg_filename}"
     if [[ -f "${pkg_path}" ]]; then
-        eval "${log_info}" || echo \
+        log_info \
             "Skipped downloading as '${pkg_path}' already exists locally"
         return
     fi
@@ -280,10 +304,10 @@ cache_repo_pkg_file() {
 }
 
 update_pacman_static() {
-    eval "${log_info}" || echo \
+    log_info \
         'Trying to update pacman-static from archlinuxcn repo'
     if touched_after_start cache/bin/pacman-static; then
-        eval "${log_info}" || echo \
+        log_info \
             'Local pacman-static was already updated during this run,'\
             'no need to update'
         return
@@ -295,25 +319,28 @@ update_pacman_static() {
 
 update_and_use_pacman_static() {
     update_pacman_static
-    eval "pacman() { '${pkg_dir}/usr/bin/pacman-static' "\$@"; }"
+    path_pacman_static="${pkg_dir}/usr/bin/pacman-static"
+    pacman() {
+        "${path_pacman_static}" "$@"
+    }
 }
 
 prepare_pacman_conf() {
-    eval "${log_info}" || echo \
+    log_info \
         "Preparing pacman configs from ${distro_stylised} repo"\
         "at '${repo_url_base}'"
     if (( "${freeze_pacman_config}" )) && [[ 
         -f "${path_etc}/pacman-strict.conf" && 
         -f "${path_etc}/pacman-loose.conf" ]]
     then
-        eval "${log_info}" || echo \
+        log_info \
             'Local pacman configs exist and --freeze-pacman was set'\
             'using existing configs'
         return
     elif touched_after_start "${path_etc}/pacman-strict.conf" &&
         touched_after_start "${path_etc}/pacman-loose.conf"
     then
-        eval "${log_info}" || echo \
+        log_info \
             'Local pacman configs were already updated during this run,'\
             'no need to update'
         return
@@ -327,7 +354,7 @@ prepare_pacman_conf() {
         for repo_base in "${repos_base[@]}"; do
             case "${repo_base}" in
             options)
-                eval "${log_error}" || echo \
+                log_error \
                     "User-defined base repo contains 'options' which is not"\
                     "allowed: ${repos_base[*]}"
                 return 1
@@ -353,12 +380,12 @@ prepare_pacman_conf() {
         done
     fi
     if [[ -z "${has_core}" ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Core repo '${repo_core}' was not found in base repos:"\
             "${repos_base[*]}"
         return 1
     fi
-    eval "${log_info}" || echo \
+    log_info \
         "Distribution ${distro_stylised} has the following base repos:"\
         "${repos_base[*]}"
     local config_head=$(
@@ -385,13 +412,13 @@ prepare_pacman_conf() {
     printf '%s\n%-13s= %s\n%s' \
         "${config_head}" 'SigLevel' 'DatabaseOptional' "${config_tail}" \
         > "${path_etc}/pacman-strict.conf"
-    eval "${log_info}" || echo \
+    log_info \
         "Generated loose config at '${path_etc}/pacman-loose.conf' and "\
         "strict config at '${path_etc}/pacman-strict.conf'"
 }
 
 no_source() {
-    eval "${log_fatal}" || echo \
+    log_fatal \
         "Both 'source' and '.' are banned from aimager,"\
         "aimager is strictly single-file only"
     return 1
@@ -449,7 +476,7 @@ table_common_dos_16g_root() {
 
 table_common_dos_1g_esp_16g_root_aarch64() {
     table_common_dos_1g_esp
-    table_part root '' 16G 
+    table_part root '' 16G linux ''
 }
 
 help_table() {
@@ -459,7 +486,7 @@ help_table() {
             tables+=("=${name:13}")
         fi
     done
-    eval "${log_info}" || echo "Available common tables: ${tables[@]}"
+    log_info "Available common tables: ${tables[@]}"
     return
 }
 
@@ -530,7 +557,7 @@ help_board() {
             boards+=("${name:6}")
         fi
     done
-    eval "${log_info}" || echo "Available boards: ${boards[@]}"
+    log_info "Available boards: ${boards[@]}"
     return
 }
 
@@ -598,7 +625,7 @@ help_repo() {
             repos+=("${name:5}")
         fi
     done
-    eval "${log_info}" || echo "Available repos: ${repos[@]}"
+    log_info "Available repos: ${repos[@]}"
     return
 }
 
@@ -609,7 +636,7 @@ require_arch_target() { #1: who
             return
         fi
     done
-    eval "${log_error}" || echo \
+    log_error \
         "1 requires target architecture to be one of ${*:2},"\
         "but it is ${arch_target}"
     return 1
@@ -645,7 +672,7 @@ distro_archlinux32() {
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['archlinux32']="${repo_url_parent}"'/archlinux32/$arch/$repo'
         else
-            eval "${log_error}" || echo \
+            log_error \
                 'Arch Linux 32 does not have a globally GeoIP-based mirror and'\
                 'a local mirror must be defined through either'\
                 '--repo-url-archlinux32 or --repo-url-parent.'\
@@ -683,7 +710,7 @@ distro_loongarchlinux() {
         if [[ "${repo_url_parent}" ]]; then
             repo_urls['loongarchlinux']="${repo_url_parent}"'/loongarch/archlinux/$repo/os/$arch'
         else
-            eval "${log_error}" || echo \
+            log_error \
                 'Loong Arch Linux does not have a globally GeoIP-based mirror'\
                 'and a local mirror must be defined through either'\
                 '--repo-url-loongarchlinux or --repo-url-parent.'\
@@ -712,8 +739,8 @@ distro_archriscv() {
 }
 
 help_distro() {
-    if ! eval "${log_info}"; then
-        echo 'Supported distro and their supported target architectures:'
+    if [[ "${log_enabled['info']}" ]]; then
+        log_info 'Supported distro and their supported target architectures:'
         echo 'Arch Linux (archlinux, arch): x86_64'
         echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
         echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
@@ -739,7 +766,7 @@ configure_board() {
     if [[ $(type -t "${board_func}") == function ]]; then
         "${board_func}"
     else
-        eval "${log_error}" || echo \
+        log_error \
             "Board '${board}' is not supported, pass --board help to get"\
             "a list of supported boards"
         return 1
@@ -764,7 +791,7 @@ configure_distro() {
         distro_archriscv
         ;;
     *)
-        eval "${log_error}" || echo \
+        log_error \
             "Unsupported distro '${distro}', use --disto help to check"\
             "the list of supported distros"
         return 1
@@ -803,23 +830,23 @@ configure_build() {
     if [[ -z "${build_id}" ]]; then
         build_id="${distro_safe}-${arch_target}-${board}-$(date +%Y%m%d%H%M%S)"
     fi
-    eval "${log_info}" || echo "Build ID is '${build_id}'"
+    log_info "Build ID is '${build_id}'"
     path_build=cache/build."${build_id}"
-    eval "${log_info}" || echo "Build folder is '${path_build}'"
+    log_info "Build folder is '${path_build}'"
     path_etc="${path_build}/etc"
     path_root="${path_build}/root"
     mkdir -p "${path_build}"/{bin,etc,root}
-    eval "${log_info}" || echo "Root mountpoint is '${path_root}'"
+    log_info "Root mountpoint is '${path_root}'"
 }
 
 configure_out() {
     if [[ -z "${out_prefix}" ]]; then
         out_prefix="out/${build_id}-"
-        eval "${log_warn}" || echo \
+        log_warn \
             "Output prefix not set, generated as '${out_prefix}'"
     fi
     if [[ "${out_prefix}" == */* ]]; then
-        eval "${log_info}" || echo \
+        log_info \
             "Output prefix contains folder, pre-creating it..."
         mkdir -p "${out_prefix%/*}"
     fi
@@ -868,7 +895,7 @@ size_mb_from_sector_or_human_readable() {
         ;;
     *)
         {
-            eval "${log_error}" || echo "Unknown suffix ${size: -1}"
+            log_error "Unknown suffix ${size: -1}"
         } >&2
         return 1
         ;;
@@ -885,36 +912,33 @@ size_mb_extract_from_sfdisk_part() { #1: line, 2: name (size/offset)
 }
 
 configure_table() {
-    eval "${log_info}" || echo 'Configuring partition table...'
+    log_info 'Configuring partition table...'
     case "${table}" in
     '@'*)
-        eval "${log_info}" || echo \
+        log_info \
             "Reading sfdisk-dump-like from '${table:1}'..."
         table=$(<"${table:1}")
         ;;
     '='*)
         local table_func="${table:1}"
-        eval "${log_info}" || echo "Using common table '${table_func}'" 
+        log_info "Using common table '${table_func}'" 
         local table_func="table_common_${table_func/-/_}"
         if [[ $(type -t "${table_func}") == function ]]; then
             table=$("${table_func}")
         else
-            eval "${log_error}" || echo \
+            log_error \
                 "Common table '${table}' is not supported, pass --table help"\
                 "to get a list of pre-defined common tabless"
             return 1
         fi
         ;;
     '')
-        eval "${log_warn}" || echo \
+        log_warn \
             'Table not defined, please define it with --table'
             # return 1
         ;;
     esac
-    if ! eval "${log_info}"; then
-        echo "Using the following partition table:"
-        echo "${table}"
-    fi
+    log_info "Using the following partition table: ${table}"
     table_part_orders=()
     # declare -gA table_part_names
     declare -gA table_part_infos
@@ -927,7 +951,7 @@ configure_table() {
         [[ "${line,,}" =~ ^aimager@(boot|root|home|swap): ]] || continue
         part_order="${line:8:4}"
         if [[ " ${table_part_orders[*]} " == *" ${part_order} "* ]]; then
-            eval "${log_error}" || echo \
+            log_error \
                 "Duplicated part definition for ${part_order}"
             return 1
         fi
@@ -990,10 +1014,10 @@ configure_table() {
             table_size="${part_end_last}"
         fi
     fi
-    eval "${log_info}" || echo \
+    log_info \
         "Table needs to be created on a disk with size at least ${table_size}M"
-    if ! eval "${log_info}"; then
-        echo "Parsed partitions that aimager needs to create:"
+    if [[ "${log_enabled['info']}" ]]; then
+        log_info 'Parsed partitions that aimager needs to create:'
         for part_order in "${table_part_orders[@]}"; do
             printf '%4s: size %6d MiB, offset %6d MiB, type %36s, uuid: %s\n' \
                 "${part_order}" \
@@ -1012,7 +1036,7 @@ configure_pkgs() {
     for pkg in "${install_pkgs[@]}"; do
         case "${pkg}" in
         'booster'|'mkinitcpio'|'dracut')
-            eval "${log_warn}" || echo \
+            log_warn \
                 "Removed '${pkg}' from install-pkg list: initrd-maker can only"\
                 'be installed via --initrd-maker'
             ;;
@@ -1042,7 +1066,7 @@ configure() {
 check() {
     check_executables
     check_date_locale
-    eval "${log_info}" || echo \
+    log_info \
         "Aimager check complete."\
         "$(( $(date +%s) - ${time_start_aimager} )) seconds has elasped since"\
         "aimager started at $(date -d @"${time_start_aimager}")"
@@ -1053,18 +1077,18 @@ binfmt_check() {
         local arch_target=loongarch64
     fi
     if [[ "${arch_host}" == "${arch_target}" ]]; then
-        eval "${log_warn}" || echo \
+        log_warn \
             "Host architecture ${arch_host} =="\
             "target architecture ${arch_target},"\
             "no need nor use to run binfmt check"
     else
         local dir_aimager=$(readlink -f "$0")
         dir_aimager="${dir_aimager%/*}"
-        eval "${log_warn}" || echo \
+        log_warn \
             "Host architecture ${arch_host} !="\
             "target architecture ${arch_target},"\
             "checking if we have binfmt ready"
-        eval "${log_info}" || echo \
+        log_info \
             "Running the following test command: "\
             "'sh -c \"cd '${dir_aimager}/test/binfmt';"\
             "./test.sh '${arch_target}'\"'"
@@ -1082,19 +1106,19 @@ identity_get_name_uid_gid() {
 identity_require_root() {
     identity_get_name_uid_gid
     if [[ "${identity_name}" != 'root' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Current context require us to run as root"\
             "but we are ${identity_name}"
         return 1
     fi
     if [[ "${identity_uid}" != '0' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Current context require us to run as root (UID = 0)"\
             "but we have UID ${identity_uid}"
         return 1
     fi
     if [[ "${identity_gid}" != '0' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Current context require us to run as root (GID = 0)"\
             "but we have GID ${identity_uid}"
         return 1
@@ -1104,18 +1128,18 @@ identity_require_root() {
 identity_require_non_root() {
     identity_get_name_uid_gid || return 1
     if [[ "${identity_name}" == 'root' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             'Current context require us to NOT run as root but we are root'
         return 1
     fi
     if [[ "${identity_uid}" == '0' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             'Current context require us to NOT run as root (UID != 0)'\
             'but we have UID 0'
         return 1
     fi
     if [[ "${identity_gid}" == '0' ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             'Current context require us to NOT run as root (GID != 0)'\
             'but we have GID 0'
         return 1
@@ -1124,17 +1148,17 @@ identity_require_non_root() {
 
 identity_require_mapped_root() {
     identity_require_root || return 1
-    eval "${log_info}" || echo \
+    log_info \
         'Trying to write content under /sys to check whether we were'\
         'mapped to root or are real root.'\
         'Expecting a write failure...'
     if echo test > /sys/sys_write_test; then
-        eval "${log_error}" || echo \
+        log_error \
             'We can write to /sys which means we have real root permission,'\
             'refuse to continue as real root'
         return 1
     else
-        eval "${log_info}" || echo \
+        log_info \
             'We are not real root and were just mapped to root'\
             'in child namespace, everything looks good'
     fi
@@ -1150,7 +1174,7 @@ identity_get_subid() { #1: type
             sed -n 's/^'"${identity_id}"':\([0-9]\+:[0-9]\+\)$/\1/p' \
                 "/etc/sub$1"))
         if [[ "${#identity_subids[@]}" == 0 ]]; then
-            eval "${log_error}" || echo \
+            log_error \
                 "Could not find ${1}map record for"\
                 "user ${identity_name} ($1 ${identity_id})"\
                 "from /etc/sub$1"
@@ -1165,7 +1189,7 @@ identity_get_subids() {
     identity_get_subid uid
     identity_subuid_range="${identity_subid#*:}"
     if [[ "${identity_subuid_range}" -lt 65535 ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Recorded subuid range in /etc/subuid too short"\
             "(${identity_subuid_range} < 65535)"
         exit 1
@@ -1174,7 +1198,7 @@ identity_get_subids() {
     identity_get_subid gid
     identity_subgid_range="${identity_subid#*:}"
     if [[ "${identity_subgid_range}" -lt 65535 ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             "Recorded subgid range in /etc/subgid too short"\
             "(${identity_subgid_range} < 65535)"
         exit 1
@@ -1183,7 +1207,7 @@ identity_get_subids() {
 }
 
 child_wait() {
-    eval "${log_debug}" || echo \
+    log_debug \
         "Child $$ started and waiting for parent to map us..."
     local i mapped=''
     for i in {0..10}; do
@@ -1191,19 +1215,19 @@ child_wait() {
             mapped='yes'
             break
         fi
-        eval "${log_info}" || echo 'Waiting for parent to map us...'
+        log_info 'Waiting for parent to map us...'
         sleep 1
     done
     if [[ -z "${mapped}" ]]; then
-        eval "${log_error}" || echo \
+        log_error \
             'Give up after waiting for 10 seconds yet parents fail to map us'
         return 1
     fi
-    eval "${log_debug}" || echo 'Child wait complete'
+    log_debug 'Child wait complete'
 }
 
 child_fs() {
-    eval "${log_info}" || echo 'Handling child rootfs...'
+    log_info 'Handling child rootfs...'
     rm -rf "${path_root}"
     mkdir "${path_root}"
     if [[ "${tmpfs_root_options}" ]]; then
@@ -1233,8 +1257,8 @@ child_fs() {
     ln -s /proc/self/fd "${path_root}"/dev/fd
     ln -s pts/ptmx "${path_root}"/dev/ptmx
     ln -s $(readlink -f /dev/stdout) "${path_root}"/dev/console
-    if ! eval "${log_debug}"; then
-        echo 'Child rootfs mountinfo is as follows:'
+    if [[ "${log_enabled['debug']}" ]]; then
+        log_debug 'Child rootfs mountinfo is as follows:'
         local prefix_mount=$(readlink -f "${path_root}")
         grep '^\([0-9]\+ \)\{2\}[0-9]\+:[0-9]\+ [^ ]\+ '"${prefix_mount}" \
             /proc/self/mountinfo
@@ -1243,7 +1267,7 @@ child_fs() {
 
 child_check_binfmt() {
     if (( "${arch_cross}" )); then
-        eval "${log_info}" || echo \
+        log_info \
             "Entering chroot to run the minimum executeble 'true' to check if"\
             "QEMU binfmt works properly"
         chroot "${path_root}" true
@@ -1251,7 +1275,7 @@ child_check_binfmt() {
 }
 
 child_init_reuse() {
-    eval "${log_info}" || echo "Reusing root tar ${reuse_root_tar}"
+    log_info "Reusing root tar ${reuse_root_tar}"
     bsdtar --acls --xattrs -xpf "${reuse_root_tar}" -C "${path_root}"
     child_check_binfmt
 }
@@ -1260,11 +1284,11 @@ child_init_keyring() {
     if [[ ! -f "${keyring_archive}" ]]; then
         local path_chroot="${path_root}"
         if [[ "${keyring_helper}" ]]; then
-            eval "${log_info}" || echo \
+            log_info \
                 "Borrowing keyring manager from root archive"\
                 "'${keyring_helper}' to sub /mnt ..."
             if [[ ! -f "${keyring_helper}" ]]; then
-                eval "${log_error}" || echo \
+                log_error \
                     "'${keyring_helper}' is not a file (and certainly not a"\
                     'root archive), can not figure out how to borrow'\
                     'keyring managers from it'
@@ -1282,7 +1306,7 @@ child_init_keyring() {
             mount -o bind "${path_root}"{,/mnt}/usr/share/pacman/keyrings
             path_chroot+='/mnt'
         elif (( ${arch_cross} )); then
-            eval "${log_warn}" || echo \
+            log_warn \
                 "Initializing and populating keyring '${keyring_id}' for the"\
                 "first time cross-architecture (from arch '${arch_host}' to"\
                 "arch '${arch_target}') using target keyring managers. This"\
@@ -1292,15 +1316,15 @@ child_init_keyring() {
                 "keyring managers from a previously created rootfs archive for"\
                 "the native architecture (yours is '${arch_host}')."
         fi
-        eval "${log_info}" || echo \
+        log_info \
             "Initializing keyring '${keyring_id}' for the first time..."
         chroot "${path_chroot}" pacman-key --init
-        eval "${log_info}" || echo \
+        log_info \
             "Populating keyring '${keyring_id}' for the first time..."
         chroot "${path_chroot}" pacman-key --populate
     fi
     mkdir -p cache/keyring
-    eval "${log_info}" || echo \
+    log_info \
         "Creating keyring backup archive '${keyring_archive}'..."
     bsdtar --acls --xattrs -cpf "${keyring_archive}.temp" -C "${path_keyring}" \
         --exclude ./S.\* .
@@ -1318,21 +1342,21 @@ child_init_bootstrap() {
             md5sum
     )
     keyring_id="md5-${keyring_id::32}"
-    eval "${log_info}" || echo "Keyring ID is ${keyring_id}"
+    log_info "Keyring ID is ${keyring_id}"
     local keyring_archive=cache/keyring/"${keyring_id}".tar
     local path_keyring="${path_root}/etc/pacman.d/gnupg"
     if [[ -f "${keyring_archive}" ]]; then
-        eval "${log_info}" || echo \
+        log_info \
             "Reusing keyring backup archive '${keyring_archive}'..."
         mkdir -p "${path_keyring}"
         bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"
     else
-        eval "${log_warn}" || echo \
+        log_warn \
             "This seems our first attempt to install for ${keyring_id},"\
             "need to initialize the keyring..."
         child_init_keyring
     fi
-    eval "${log_info}" || echo "Going back to verify bootstrap packages..."
+    log_info "Going back to verify bootstrap packages..."
     pacman -S --config "${path_etc}/pacman-strict.conf" \
         --downloadonly --noconfirm \
         $(
@@ -1349,12 +1373,12 @@ child_init() {
 }
 
 child_initrd_set_universal_dracut() {
-    eval "${log_fatal}" || echo 'Not implemented yet'
+    log_fatal 'Not implemented yet'
     return 1
 }
 
 child_setup_initrd_maker() {
-    eval "${log_info}" || echo \
+    log_info \
         'Checking if we need to install and hack initrd maker...'
     if pacman -T --config "${path_etc}/pacman-strict.conf" initramfs \
         > /dev/null
@@ -1362,11 +1386,11 @@ child_setup_initrd_maker() {
         return
     fi
     if [[ "${initrd_maker}" ]]; then
-        eval "${log_info}" || echo "Installing initrd maker ${initrd_maker}..."
+        log_info "Installing initrd maker ${initrd_maker}..."
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
             "${initrd_maker}"
     else
-        eval "${log_warn}" || echo \
+        log_warn \
             'Not installing any initrd maker! If you really are installing any'\
             'kernel pacakges, it is recommended to use --initrd-maker to let'\
             'aimager install the initrd maker so it could do some workarounds'\
@@ -1388,7 +1412,7 @@ child_setup_initrd_maker() {
     '')
         ;;
     *)
-        eval "${log_error}" || echo \
+        log_error \
             "Unknown initrd maker ${initrd_maker}, it could only be one of the"\
             'following: booster, mkinitcpio, dracut'
             return 1
@@ -1421,13 +1445,9 @@ child_revert_initrd_maker() {
 }
 
 child_setup() {
-    local overlay
-    for overlay in "${overlays[@]}"; do
-        bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
-    done
     child_setup_initrd_maker
     if (( "${#install_pkgs[@]}" )); then
-        eval "${log_info}" || echo \
+        log_info \
             "Installing the following packages: ${install_pkgs[*]}"
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
             --needed "${install_pkgs[@]}"
@@ -1436,6 +1456,10 @@ child_setup() {
     if [[ "${pacman_conf_append}" ]]; then
         echo "${pacman_conf_append}" >> "${path_root}/etc/pacman.conf"
     fi
+    local overlay
+    for overlay in "${overlays[@]}"; do
+        bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
+    done
 }
 
 child_out() {
@@ -1449,25 +1473,25 @@ child_out() {
 }
 
 child_clean() {
-    eval "${log_info}" || echo 'Child cleaning...'
-    eval "${log_info}" || echo 'Killing child gpg-agent...'
+    log_info 'Child cleaning...'
+    log_info 'Killing child gpg-agent...'
     chroot "${path_root}" pkill -SIGINT --echo '^gpg-agent$' || true
     if [[ "${tmpfs_root_options}" ]]; then
-        eval "${log_info}" || echo 'Using tmpfs, skipped cleaning'
+        log_info 'Using tmpfs, skipped cleaning'
         return
     fi
-    eval "${log_info}" || echo 'Syncing after killing gpg-agent...'
+    log_info 'Syncing after killing gpg-agent...'
     sync
-    eval "${log_info}" || echo 'Umounting rootfs...'
+    log_info 'Umounting rootfs...'
     umount -R "${path_root}"
-    eval "${log_info}" || echo 'Deleting rootfs leftovers...'
+    log_info 'Deleting rootfs leftovers...'
     rm -rf "${path_root}"
 }
 
 child() {
     child_wait
     if (( "${run_clean_builds}" )); then
-        eval "${log_info}" || echo 'Cleaning builds...'
+        log_info 'Cleaning builds...'
         rm -rf cache/build.*
         return
     fi
@@ -1487,7 +1511,7 @@ child() {
         child_out
     fi
     child_clean
-    eval "${log_info}" || echo 'Child exiting!!'
+    log_info 'Child exiting!!'
 }
 
 prepare_child_context() {
@@ -1495,16 +1519,15 @@ prepare_child_context() {
         echo 'set -euo pipefail'
         declare -p | grep 'declare -[-fFgIpaAilnrtux]\+ [a-z_]'
         declare -f
-        echo 'script_name=child.sh'
         echo 'child'
     } >  "${path_build}/bin/child.sh"
 }
 
 run_child_and_wait_sync() {
-    eval "${log_info}" || echo \
+    log_info \
         'System unshare support --map-users and --map-groups,'\
         'using unshare itself to map'
-    eval "${log_info}" || echo 'Spwaning child (sync)...'
+    log_info 'Spwaning child (sync)...'
     unshare --user --pid --mount --fork \
         --map-root-user \
         --map-users="${map_users}" \
@@ -1514,10 +1537,10 @@ run_child_and_wait_sync() {
 }
 
 run_child_and_wait_async() {
-    eval "${log_info}" || echo \
+    log_info \
         'System unshare does not support --map-users and --map-groups,'\
         'mapping manually using newuidmap and newgidmap'
-    eval "${log_info}" || echo 'Spwaning child (async)...'
+    log_info 'Spwaning child (async)...'
     unshare --user --pid --mount --fork --kill-child=SIGTERM \
         /bin/bash "${path_build}/bin/child.sh"  &
     pid_child="$!"
@@ -1535,17 +1558,17 @@ run_child_and_wait_async() {
     newgidmap "${pid_child}" \
         0 "${identity_gid}" 1 \
         1 "${identity_subgid_start}" "${identity_subgid_range}"
-    eval "${log_info}" || echo \
+    log_info \
         "Mapped UIDs and GIDs for child ${pid_child}, "\
         "waiting for it to finish..."
     wait "${pid_child}"
     trap - INT TERM EXIT
-    eval "${log_info}" || echo "Child ${pid_child} finished successfully"
+    log_info "Child ${pid_child} finished successfully"
 }
 
 run_child_and_wait() {
     if (( "${async_child}" )); then
-        eval "${log_warn}" || echo 'Forcing to spwan child in async way'
+        log_warn 'Forcing to spwan child in async way'
         run_child_and_wait_async
         return
     fi
@@ -1570,18 +1593,18 @@ run_child_and_wait() {
 }
 
 clean() {
-    eval "${log_info}" || echo 'Cleaning up before exiting...'
+    log_info 'Cleaning up before exiting...'
     rm -rf "${path_build}"
 }
 
 work() {
-    eval "${log_info}" || echo \
+    log_info \
         "Building for distro '${distro}' to architecture '${arch_target}'"\
         "from architecture '${arch_host}'"
     prepare_pacman_conf
     prepare_child_context
     if (( "${run_only_prepare_child}" )); then
-        eval "${log_info}" || echo 'Early exiting before spawning child ...'
+        log_info 'Early exiting before spawning child ...'
         return
     fi
     identity_get_subids
@@ -1598,7 +1621,7 @@ aimager() {
     fi
     check
     work
-    eval "${log_info}" || echo 'aimager exiting!!'
+    log_info 'aimager exiting!!'
 }
 
 create_part_boot_img() {
@@ -1606,14 +1629,14 @@ create_part_boot_img() {
         return
     fi
     local path_out="${out_prefix}part-boot.img"
-    eval "${log_info}" || echo "Creating boot partition image '${path_out}'..."
+    log_info "Creating boot partition image '${path_out}'..."
     truncate -s "${table_part_sizes[boot]}"M "${path_out}.temp"
     mkfs.fat -i "${table_part_uuids[boot]::4}${table_part_uuids[boot]:5}" \
         ${mkfs_args[boot]:-} "${path_out}.temp"
     mcopy -osi "${path_out}.temp" "${path_root}/boot/"* ::
     mv "${path_out}"{.temp,}
     created['part-boot.img']='y'
-    eval "${log_info}" || echo "Created boot partition image '${path_out}'"
+    log_info "Created boot partition image '${path_out}'"
 }
 
 create_part_root_img() {
@@ -1621,7 +1644,7 @@ create_part_root_img() {
         return
     fi
     local path_out="${out_prefix}part-root.img"
-    eval "${log_info}" || echo "Creating root partition image '${path_out}'..."
+    log_info "Creating root partition image '${path_out}'..."
     truncate -s "${table_part_sizes[root]}"M "${path_out}.temp"
     local shadow
     local shadows=(dev mnt proc sys)
@@ -1641,7 +1664,7 @@ create_part_root_img() {
     done
     mv "${path_out}"{.temp,}
     created['part-root.img']='y'
-    eval "${log_info}" || echo "Created root partition image '${path_out}'"
+    log_info "Created root partition image '${path_out}'"
 }
 
 create_part_home_img() {
@@ -1649,13 +1672,13 @@ create_part_home_img() {
         return
     fi
     local path_out="${out_prefix}part-home.img"
-    eval "${log_info}" || echo "Creating home partition image '${path_out}'..."
+    log_info "Creating home partition image '${path_out}'..."
     truncate -s "${table_part_sizes[home]}"M "${path_out}.temp"
     mkfs.ext4 -d "${path_root}/home" -U "${table_part_uuids[home]}" \
         ${mkfs_args[home]:-} "${path_out}.temp"
     mv "${path_out}"{.temp,}
     created['part-home.img']='y'
-    eval "${log_info}" || echo "Created home partition image '${path_out}'"
+    log_info "Created home partition image '${path_out}'"
 }
 
 create_disk_img() {
@@ -1663,20 +1686,20 @@ create_disk_img() {
         return
     fi
     local path_out="${out_prefix}disk.img"
-    eval "${log_info}" || echo "Creating disk image '${path_out}'..."
+    log_info "Creating disk image '${path_out}'..."
     truncate -s "${table_size}"M "${path_out}".temp
     local part_order
     sfdisk "${path_out}".temp <<< "${table}"
     for part_order in "${table_part_orders[@]}"; do
         create_part_"${part_order}"_img
-        eval "${log_info}" || echo \
+        log_info \
             "Writing partition ${part_order} into disk image '${path_out}'..."
         dd if="${out_prefix}part-${part_order}.img" of="${path_out}.temp" \
             bs=1M seek="${table_part_offsets["${part_order}"]}" conv=notrunc
     done
     mv "${path_out}"{.temp,}
     created['part-home.img']='y'
-    eval "${log_info}" || echo "Created home partition image '${path_out}'"
+    log_info "Created home partition image '${path_out}'"
 }
 
 create_root_tar() {
@@ -1684,14 +1707,14 @@ create_root_tar() {
         return
     fi
     local path_out="${out_prefix}root.tar"
-    eval "${log_info}" || echo "Creating root archive '${path_out}'..."
+    log_info "Creating root archive '${path_out}'..."
     bsdtar --acls --xattrs -cpf "${path_out}.temp" -C "${path_root}" \
         --exclude './dev' --exclude './mnt' --exclude './proc' \
         --exclude './sys' --exclude './etc/pacman.d/gnupg/S.*' \
         .
     mv "${path_out}"{.temp,}
     created['root.tar']='y'
-    eval "${log_info}" || echo "Created root archive '${path_out}'"
+    log_info "Created root archive '${path_out}'"
 }
 
 create_keyring_helper_tar() {
@@ -1699,7 +1722,7 @@ create_keyring_helper_tar() {
         return
     fi
     local path_out="${out_prefix}keyring-helper.tar"
-    eval "${log_info}" || echo "Creating keyring helper '${path_out}'..."
+    log_info "Creating keyring helper '${path_out}'..."
     local filters=(
         --include './bin' --include './etc/pacman*' --include './lib*'
         --include './usr/bin' --include './usr/lib/getconf'
@@ -1707,7 +1730,7 @@ create_keyring_helper_tar() {
         --exclude './etc/pacman.d/gnupg/*'
     )
     if [[ "${created['root.tar']:-}" ]]; then
-        eval "${log_info}" || echo 'Reusing root.tar created in the same run...'
+        log_info 'Reusing root.tar created in the same run...'
         bsdtar --acls --xattrs -cpf "${path_out}.temp" "${filters[@]}" \
             "@${out_prefix}root.tar"
     else
@@ -1719,7 +1742,7 @@ create_keyring_helper_tar() {
     fi
     mv "${path_out}"{.temp,}
     created['keyring-helper.tar']='y'
-    eval "${log_info}" || echo "Created keyring helper '${path_out}'"
+    log_info "Created keyring helper '${path_out}'"
 }
 
 help_create() {
@@ -1729,7 +1752,7 @@ help_create() {
             creates+=("${name:7}")
         fi
     done
-    eval "${log_info}" || echo \
+    log_info \
         "Available to-be-created targets (_ can be written as either - or .):"\
         "${creates[*]}"
     return
@@ -2002,8 +2025,8 @@ aimager_cli() {
             return 0
             ;;
         *)
-            if ! eval "${log_error}"; then
-                echo "Unknown argument '$1'"
+            if [[ "${log_enabled['error']}" ]]; then
+                log_error "Unknown argument '$1'"
                 report_wrong_arg './aimager.sh' "${args_original[*]}" "$@"
             fi
             bad_arg=1
