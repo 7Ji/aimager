@@ -1489,8 +1489,8 @@ child_clean() {
         log_info 'Using tmpfs, skipped cleaning'
         return
     fi
-    log_info 'Syncing after killing gpg-agent...'
-    sync
+    # log_info 'Syncing after killing gpg-agent...'
+    # sync
     log_info 'Umounting rootfs...'
     umount -R "${path_root}"
     log_info 'Deleting rootfs leftovers...'
