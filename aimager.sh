@@ -64,7 +64,11 @@ aimager_init() {
         [error]='y'
         [fatal]='y'
     )
-    case "${AIMAGER_LOG_LEVEL:-info}" in
+    local AIMAGER_LOG_LEVEL="${AIMAGER_LOG_LEVEL:-info}"
+    case "${AIMAGER_LOG_LEVEL,,}" in
+    'debug')
+        :
+        ;;
     'info')
         log_enabled[debug]=''
         ;;
@@ -82,6 +86,11 @@ aimager_init() {
         log_enabled[info]=''
         log_enabled[warn]=''
         log_enabled[error]=''
+        ;;
+    *)
+        log_fatal "Unknown log level ${AIMAGER_LOG_LEVEL}, shall be one of the"\
+            "following (case-insensitive): debug, info, warn, error, fatal"
+        return 1
         ;;
     esac
     # variables
