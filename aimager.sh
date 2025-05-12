@@ -750,10 +750,10 @@ distro_archriscv() {
 help_distro() {
     if [[ "${log_enabled['info']}" ]]; then
         log_info 'Supported distro and their supported target architectures:'
-        echo 'Arch Linux (archlinux, arch): x86_64'
-        echo 'Arch Linux 32 (archlinux32, arch32): i486, pentium4, i686'
-        echo 'Arch Linux ARN (archlinuxarm, archarm, alarm): armv7h, aarch64'
-        echo 'Loong Arch Linux (loongarchlinux, loongarch): '\
+        echo 'Arch Linux (archlinux, alias: arch): x86_64'
+        echo 'Arch Linux 32 (archlinux32, alias: arch32): i486, pentium4, i686'
+        echo 'Arch Linux ARN (archlinuxarm, alias: archarm, alarm): armv7h, aarch64'
+        echo 'Loong Arch Linux (loongarchlinux, alias: loongarch): '\
             'loongarch64(rewritten to loong64), loong64'
         echo 'Arch Linux RISC-V (archriscv, archlinuxriscv): riscv64'
     fi
@@ -1780,7 +1780,7 @@ help_aimager() {
     printf -- "${formatter}" \
         'arch-target [arch]' 'target architecure; default: result of `uname -m`' \
         'arch [arch]' 'alias to --arch-target' \
-        'board [board]' 'board, would call corresponding built-in board definition to define other options, pass "help" to get the list of supported boards, pass "help=[board]" to get the board definition; default: none' \
+        'board [board]' 'board, would call corresponding built-in board definition to define other options, if no board is defined only rootfs tarball is created, pass "help" to get the list of supported boards, pass "help=[board]" to get the board definition; default: none' \
         'build-id [build id]' 'a unique build id; default: [distro safe name]-[target architecture]-[board]-[yyyymmddhhmmss]' \
         'distro [distro]*' 'distro, required, passing "help" to get the list of supported distros, pass "help=[distro]" to get the distro definition' \
         'out-prefix [prefix]' 'prefix to output archives and images, default: out/[build id]-'\
@@ -1821,6 +1821,15 @@ help_aimager() {
         'help' 'print this help message' \
         'only-backup-keyring' 'bootstrap, init and populate the keyring, backup, then early quit'\
         'only-prepare-child' 'early exit before spawning child, mainly for debugging' \
+
+    printf '\nExamples:\n'
+    printf -- '    %s\n    > ./aimager.sh %s\n' \
+        'to create an Arch Linux rootfs:' \
+            '--distro arch' \
+        'to create an EFI-bootable Arch Linux iamge:' \
+            '--board x64_uefi' \
+        'to create an u-boot bootable Arch Linux ARM image for Orange Pi 5 Plus:' \
+            '--board orangepi_5_plus' \
 
 }
 
