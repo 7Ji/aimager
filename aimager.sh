@@ -1453,6 +1453,52 @@ child_revert_initrd_maker() {
     esac
 }
 
+child_setup_fstab() {
+    local part_order part_mount part_type part_options part_pass
+    for part_order in "${table_part_orders[@]}"; do
+        case "${part_order}" in
+        'root')
+            part_mount='/'
+            ;;
+        'swap')
+            part_mount='none'
+            ;;
+        *)
+            part_mount="/${part_order}"
+            ;;
+        esac
+        case "${part_order}" in
+        'boot')
+            part_type='vfat'
+            part_options='rw,defaults'
+            part_pass=2
+            ;;
+        'swap')
+            part_type='swap'
+            part_options='none'
+            part_pass=0
+            ;;
+        *)
+            part_type='ext4'
+            part_options='rw,noatime,defaults'
+            part_pass=1
+            ;;
+        esac
+        printf '# aimager-part: %s\nUUID=%-36s %-5s %-5s %-20s 0 %u\n' \
+            "${table_part_infos["${part_order}"]}" \
+            "${table_part_uuids["${part_order}"]}" \
+            "${part_mount}" \
+            "${part_type}" \
+            "${part_options}" \
+            "${part_pass}" \
+
+    done >> "${path_root}/etc/fstab"
+}
+
+child_setup_boot() {
+    :
+}
+
 child_setup() {
     child_setup_initrd_maker
     if (( "${#install_pkgs[@]}" )); then
@@ -1465,6 +1511,8 @@ child_setup() {
     if [[ "${pacman_conf_append}" ]]; then
         echo "${pacman_conf_append}" >> "${path_root}/etc/pacman.conf"
     fi
+    child_setup_fstab
+    child_setup_boot
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
