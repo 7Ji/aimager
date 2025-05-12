@@ -1559,7 +1559,7 @@ child_setup_bootloader_systemd_boot() {
     local boot_conf kernel kernel_default= ucode initrd_prefix
     get_initrd_prefix
     for kernel in "${kernels[@]}"; do
-        kernel_default="${kernel:-${kernel_default}}"
+        kernel_default="${kernel_default:-${kernel}}"
         {
             echo "title ${distro_stylised}"
             echo "linux /vmlinuz-${kernel}"
