@@ -106,6 +106,8 @@ aimager_init() {
     freeze_pacman_config=0
     freeze_pacman_static=0
     initrd_maker=''
+    kernels=()
+    declare -gA ucodes
     install_pkgs=()
     declare -gA mkfs_args
     out_prefix=''
@@ -507,7 +509,11 @@ board_x64_uefi() {
         table='=gpt_1g_esp_16g_root_x86_64'
     fi
     initrd_maker="${initrd_maker:-booster}"
-    install_pkgs+=('linux')
+    kernels+=('linux' 'linux-lts')
+    ucodes+=(
+        [amd-ucode]='amd-ucode.img'
+        [intel-ucode]='intel-ucode.img'
+    )
 }
 
 board_x86_legacy() {
@@ -518,7 +524,11 @@ board_x86_legacy() {
         table='=dos_16g_root'
     fi
     initrd_maker="${initrd_maker:-booster}"
-    install_pkgs+=('linux')
+    kernels+=('linux' 'linux-lts')
+    ucodes+=(
+        [amd-ucode]='amd-ucode.img'
+        [intel-ucode]='intel-ucode.img'
+    )
 }
 
 board_amlogic_s9xxx() {
@@ -540,7 +550,7 @@ board_orangepi_5_family() {
     fi
     add_repos+=('7Ji')
     initrd_maker="${initrd_maker:-booster}"
-    install_pkgs+=('linux-aarch64-rockchip-joshua-git')
+    kernels+=('linux-aarch64-7ji')
 }
 
 board_orangepi_5() {
@@ -1495,24 +1505,109 @@ child_setup_fstab() {
     done >> "${path_root}/etc/fstab"
 }
 
-child_setup_boot() {
-    :
+get_initrd_prefix() {
+    case "${initrd_maker}" in
+    mkinitcpio)
+        initrd_prefix=initramfs-
+        ;;
+    booster)
+        initrd_prefix=booster-
+        ;;
+    dracut)
+        initrd_prefix=dracut-
+        ;;
+    *)
+        log_error "Illegal initrd maker: ${initrd_maker}"
+        return 1
+        ;;
+    esac
+}
+
+get_name_efi_removable() {
+    case "${arch_target}" in
+    'x86_64')
+        name_efi_removable='BOOTX64.EFI'
+        ;;
+    'armv7h')
+        name_efi_removable='BOOTARM.EFI'
+        ;;
+    'aarch64')
+        name_efi_removable='BOOTAA64.EFI'
+        ;;
+    'i486'|'pentium4'|'i686')
+        name_efi_removable='BOOTIA32.EFI'
+        ;;
+    'riscv64')
+        name_efi_removable='BOOTRISCV64.EFI'
+        ;;
+    *)
+        log_error "Cannot get name of EFI removable binary for ${arch_target}"
+        ;;
+    esac
+}
+
+child_setup_bootloader_systemd_boot() {
+    # we cannot use 'bootctl --graceful install' as --graceful has no effect:
+    # systemd since 90cf998875a
+    mkdir -p "${path_root}/boot/"{EFI/BOOT,loader/entries}
+    local name_efi_removable
+    get_name_efi_removable
+    cp "${path_root}/"{"usr/lib/systemd/boot/efi/systemd-${name_efi_removable,,}","boot/EFI/BOOT/${name_efi_removable}"}
+    echo type1 > "${path_root}/boot/loader/entries.srel"
+    dd if=/dev/urandom of="${path_root}/boot/loader/random-seed" bs=32 count=1
+
+    local boot_conf kernel kernel_default= ucode initrd_prefix
+    get_initrd_prefix
+    for kernel in "${kernels[@]}"; do
+        kernel_default="${kernel:-${kernel_default}}"
+        {
+            echo "title ${distro_stylised}"
+            echo "linux /vmlinuz-${kernel}"
+            printf 'initrd /%s\n' "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
+            echo "options root=UUID=${table_part_uuids[root]} rw"
+        } > "${path_root}/boot/loader/entries/${distro_safe}-${kernel}.conf"
+    done
+    printf '%s %s\n' \
+        'default' "${distro_safe}-${kernel_default}.conf" \
+        'timeout' '3' \
+        > "${path_root}/boot/loader/loader.conf"
+}
+
+child_setup_bootloader_syslinux() {
+    log_error 'Syslinux not implemented yet'
+    return 1
+}
+
+child_setup_bootloader_u_boot() {
+    log_error 'u-boot not implemented yet'
+    return 1
+}
+
+child_setup_bootloader() {
+    local bootloader_func="child_setup_bootloader_${bootloader/-/_}"
+    if [[ $(type -t "${bootloader_func}") == function ]]; then
+        "${bootloader_func}"
+    else
+        log_error "Bootloader '${bootloader}' is not supported, supported: " \
+            'systemd-boot, syslinux, u-boot'
+        return 1
+    fi
 }
 
 child_setup() {
     child_setup_initrd_maker
-    if (( "${#install_pkgs[@]}" )); then
+    if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}" ]]; then
         log_info \
-            "Installing the following packages: ${install_pkgs[*]}"
+            "Installing packages: ${install_pkgs[*]} ${kernels[*]} ${!ucodes[*]}"
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
-            --needed "${install_pkgs[@]}"
+            --needed "${install_pkgs[@]}" "${kernels[@]}" "${!ucodes[@]}"
     fi
     child_revert_initrd_maker
     if [[ "${pacman_conf_append}" ]]; then
         echo "${pacman_conf_append}" >> "${path_root}/etc/pacman.conf"
     fi
     child_setup_fstab
-    child_setup_boot
+    child_setup_bootloader
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
