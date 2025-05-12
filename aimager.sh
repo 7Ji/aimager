@@ -1762,8 +1762,19 @@ help_create() {
         fi
     done
     log_info \
-        "Available to-be-created targets (_ can be written as either - or .):"\
-        "${creates[*]}"
+        "Available to-be-created targets (_, -, . are inter-changable):"
+    printf '%s:\n\t%s\n' \
+        'part-boot.img' \
+            'the FAT boot partition image, containing everything in rootfs under /boot' \
+        'part-root.img' \
+            'the ext4 root partition image, containing everything in rootfs, except /boot and /home if they were defined in table' \
+        'part-home.img' \
+            'the ext4 home partition image, containing everything in rootfs under /home' \
+        'disk.img' \
+            'a partitioned disk image file containing define partition table, containing at least part-root.img, and possibly part-boot.img and/or part-home.img if they were defined in table' \
+        'root.tar' \
+            'a tarball containing everything in rootfs' \
+
     return
 }
 
@@ -1825,11 +1836,11 @@ help_aimager() {
     printf '\nExamples:\n'
     printf -- '    %s\n    > ./aimager.sh %s\n' \
         'to create an Arch Linux rootfs:' \
-            '--distro arch' \
+            '--distro arch --create root.tar' \
         'to create an EFI-bootable Arch Linux iamge:' \
-            '--board x64_uefi' \
+            '--board x64_uefi --create disk.img' \
         'to create an u-boot bootable Arch Linux ARM image for Orange Pi 5 Plus:' \
-            '--board orangepi_5_plus' \
+            '--board orangepi_5_plus --create disk.img' \
 
 }
 
