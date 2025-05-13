@@ -1557,7 +1557,7 @@ child_setup_bootloader_systemd_boot() {
     echo type1 > "${path_root}/boot/loader/entries.srel"
     dd if=/dev/urandom of="${path_root}/boot/loader/random-seed" bs=32 count=1
 
-    local boot_conf kernel kernel_default= ucode initrd_prefix append=
+    local boot_conf kernel kernel_default= ucode initrd_prefix append fdtdir fdtfile
     get_initrd_prefix
     for kernel in "${kernels[@]}"; do
         kernel_default="${kernel_default:-${kernel}}"
@@ -1569,6 +1569,18 @@ child_setup_bootloader_systemd_boot() {
             echo "title ${distro_stylised}"
             echo "linux /vmlinuz-${kernel}"
             printf 'initrd /%s\n' "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
+            fdtdir="/boot/dtbs/${kernel}"
+            if [[ -d "${path_root}${fdtdir}" ]]; then
+                echo "fdtdir ${fdtdir}"
+            fi
+            if [[ "${fdt:-}" == '/'* ]]; then
+                fdtfile="${fdt:-}"
+            else
+                fdtfile="${fdtdir}/${fdt:-}"
+            fi
+            if [[ -f "${path_root}${fdtfile}" ]]; then
+                echo "fdt ${fdtfile}"
+            fi
             echo "options root=UUID=${table_part_uuids[root]} rw${append}"
         } > "${path_root}/boot/loader/entries/${distro_safe}-${kernel}.conf"
     done
