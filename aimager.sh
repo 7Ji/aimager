@@ -1939,7 +1939,7 @@ create_disk_img() {
     fi
     local path_out="${out_prefix}disk.img"
     if [[ -f "${path_build}/head.img" ]]; then
-        mv "${path_build}/head.img" "${path_out}"
+        mv "${path_build}/head.img" "${path_out}.temp"
     fi
     log_info "Creating disk image '${path_out}'..."
     truncate -s "${table_size}"M "${path_out}".temp
