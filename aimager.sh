@@ -1674,7 +1674,6 @@ child_setup_bootloader_syslinux() {
         log_error 'Table label != dos, cannot install syslinux'
         return 1
     fi
-    created['+head.img']='y'
     dd bs=440 count=1 conv=notrunc if="${path_root}/usr/lib/syslinux/bios/mbr.bin" of="${path_build}/head.img"
     child_setup_bootloader_extlinux
 }
@@ -1939,7 +1938,7 @@ create_disk_img() {
         return
     fi
     local path_out="${out_prefix}disk.img"
-    if [[ "${created['+head.img']:-}" ]]; then
+    if [[ -f "${path_build}/head.img" ]]; then
         mv "${path_build}/head.img" "${path_out}"
     fi
     log_info "Creating disk image '${path_out}'..."
