@@ -1573,14 +1573,16 @@ child_setup_bootloader_systemd_boot() {
             if [[ -d "${path_root}${fdtdir}" ]]; then
                 echo "fdtdir ${fdtdir}"
             fi
-            if [[ "${fdt:-}" == '/'* ]]; then
-                fdtfile="${fdt:-}"
-            else
-                fdtfile="${fdtdir}/${fdt:-}"
-            fi
-            if [[ -f "${path_root}${fdtfile}" ]]; then
-                echo "fdt ${fdtfile}"
-            fi
+            case "${fdt:-}" in
+            '/'*)
+                echo "fdt ${fdt}"
+                ;;
+            '')
+                ;;
+            *)
+                echo "fdt ${fdtdir}/${fdt}"
+                ;;
+            esac
             echo "options root=UUID=${table_part_uuids[root]} rw${append}"
         } > "${path_root}/boot/loader/entries/${distro_safe}-${kernel}.conf"
     done
