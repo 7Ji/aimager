@@ -502,14 +502,18 @@ help_table() {
     return
 }
 
+_board_booster() {
+    initrd_maker="${initrd_maker:-booster}"
+}
+
 board_x64_uefi() {
+    _board_booster
     distro='Arch Linux'
     arch_target='x86_64'
     bootloader='systemd-boot'
     if [[ -z "${table:-}" ]]; then
         table='=gpt_1g_esp_16g_root_x86_64'
     fi
-    initrd_maker="${initrd_maker:-booster}"
     kernels+=('linux' 'linux-lts')
     ucodes+=(
         [amd-ucode]='amd-ucode.img'
@@ -518,40 +522,60 @@ board_x64_uefi() {
 }
 
 board_x86_legacy() {
+    _board_booster
     distro='Arch Linux 32'
     arch_target='i686'
     bootloader='syslinux'
     if [[ -z "${table:-}" ]]; then
         table='=dos_16g_root'
     fi
-    initrd_maker="${initrd_maker:-booster}"
-    kernels+=('linux' 'linux-lts')
-    ucodes+=(
-        [amd-ucode]='amd-ucode.img'
-        [intel-ucode]='intel-ucode.img'
-    )
+    #kernels+=('linux' 'linux-lts')
+    #ucodes+=(
+    #    [amd-ucode]='amd-ucode.img'
+    #    [intel-ucode]='intel-ucode.img'
+    #)
+}
+
+_board_aarch64_no_table() {
+    _board_booster
+    distro='Arch Linux ARM'
+    arch_target='aarch64'
+    add_repos+=('7Ji')
+    kernels+=('linux-aarch64-7ji')
+}
+
+_board_aarch64() {
+    _board_aarch64_no_table
+    if [[ -z "${table:-}" ]]; then
+        table='=gpt_1g_esp_16g_root_aarch64'
+    fi
+}
+
+board_aarch64_uefi() {
+    _board_aarch64
+    bootloader='systemd-boot'
+}
+
+board_phytium_d2000() {
+    board_aarch64_uefi
+}
+
+board_aarch64_uboot() {
+    _board_aarch64
+    bootloader='u-boot'
 }
 
 board_amlogic_s9xxx() {
-    distro='Arch Linux ARM'
-    arch_target='aarch64'
+    _board_aarch64_no_table
     bootloader='u-boot'
     if [[ -z "${table:-}" ]]; then
         table='=dos_1g_esp_16g_root_aarch64'
     fi
-    initrd_maker="${initrd_maker:-booster}"
+    fdt='amlogic/PLEASE_SET_ME.dtb'
 }
 
 board_orangepi_5_family() {
-    distro='Arch Linux ARM'
-    arch_target='aarch64'
-    bootloader='u-boot'
-    if [[ -z "${table:-}" ]]; then
-        table='=gpt_1g_esp_16g_root_aarch64'
-    fi
-    add_repos+=('7Ji')
-    initrd_maker="${initrd_maker:-booster}"
-    kernels+=('linux-aarch64-7ji')
+    board_aarch64_uboot
 }
 
 board_orangepi_5() {
@@ -1547,6 +1571,13 @@ get_name_efi_removable() {
     esac
 }
 
+get_append() {
+    append="${appends[all]:-${appends["${kernel}"]:-${appends[default]:-}}}"
+    if [[ "${append}" ]]; then
+        append=" ${append}"
+    fi
+}
+
 child_setup_bootloader_systemd_boot() {
     # we cannot use 'bootctl --graceful install' as --graceful has no effect:
     # systemd since 90cf998875a
@@ -1557,14 +1588,15 @@ child_setup_bootloader_systemd_boot() {
     echo type1 > "${path_root}/boot/loader/entries.srel"
     dd if=/dev/urandom of="${path_root}/boot/loader/random-seed" bs=32 count=1
 
-    local boot_conf kernel kernel_default= ucode initrd_prefix append fdtdir fdtfile
+    printf '%s %s\n' \
+        'default' "${distro_safe}-${kernels[0]}.conf" \
+        'timeout' '3' \
+        > "${path_root}/boot/loader/loader.conf"
+
+    local kernel initrd_prefix append fdtdir fdtfile
     get_initrd_prefix
     for kernel in "${kernels[@]}"; do
-        kernel_default="${kernel_default:-${kernel}}"
-        append="${appends[all]:-${appends["${kernel}"]:-${appends[default]:-}}}"
-        if [[ "${append}" ]]; then
-            append=" ${append}"
-        fi
+        get_append
         {
             echo "title ${distro_stylised}"
             echo "linux /vmlinuz-${kernel}"
@@ -1586,20 +1618,55 @@ child_setup_bootloader_systemd_boot() {
             echo "options root=UUID=${table_part_uuids[root]} rw${append}"
         } > "${path_root}/boot/loader/entries/${distro_safe}-${kernel}.conf"
     done
-    printf '%s %s\n' \
-        'default' "${distro_safe}-${kernel_default}.conf" \
-        'timeout' '3' \
-        > "${path_root}/boot/loader/loader.conf"
+}
+
+child_setup_bootloader_extlinux() {
+    local extlinux="${path_root}/boot/extlinux"
+    mkdir -p "${extlinux}"
+    extlinux+='/extlinux.conf'
+    local format_indent0='%-12s%s\n'
+    local format_indent1='    %-12s%s\n'
+    printf "${format_indent0}" \
+        'MENU TITLE' "${distro_stylised}" \
+        'TIMEOUT' '30' \
+        'DEFAULT' "${kernels[0]}" \
+        > "${extlinux}"
+    local kernel initrd_prefix append fdtdir fdtfile
+    get_initrd_prefix
+    for kernel in "${kernels[@]}"; do
+        get_append
+        {
+            printf "${format_indent0}" 'LABEL' "${kernel}"
+            printf "${format_indent1}" \
+                'LINUX' "/vmlinuz-${kernel}" \
+                'INITRD' "/${initrd_prefix}${kernel}.img"
+            fdtdir="/boot/dtbs/${kernel}"
+            if [[ -d "${path_root}${fdtdir}" ]]; then
+                printf "${format_indent1}" 'FDTDIR' "${fdtdir}"
+            fi
+            case "${fdt:-}" in
+            '/'*)
+                printf "${format_indent1}" 'FDT' "${fdt}"
+                ;;
+            '')
+                ;;
+            *)
+                printf "${format_indent1}" 'FDT' "${fdtdir}/${fdt}"
+                ;;
+            esac
+            printf "${format_indent1}" 'APPEND' "root=UUID=${table_part_uuids[root]} rw${append}"
+        } >> "${extlinux}"
+    done
 }
 
 child_setup_bootloader_syslinux() {
-    log_error 'Syslinux not implemented yet'
-    return 1
+    log_warn 'Syslinux installtion not implemented, only extlinux generated'
+    child_setup_bootloader_extlinux
 }
 
 child_setup_bootloader_u_boot() {
-    log_error 'u-boot not implemented yet'
-    return 1
+    log_warn 'U-boot installtion not implemented, only extlinux generated'
+    child_setup_bootloader_extlinux
 }
 
 child_setup_bootloader() {
