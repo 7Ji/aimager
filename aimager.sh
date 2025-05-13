@@ -108,6 +108,7 @@ aimager_init() {
     initrd_maker=''
     kernels=()
     declare -gA ucodes
+    declare -gA appends
     install_pkgs=()
     declare -gA mkfs_args
     out_prefix=''
@@ -1556,15 +1557,19 @@ child_setup_bootloader_systemd_boot() {
     echo type1 > "${path_root}/boot/loader/entries.srel"
     dd if=/dev/urandom of="${path_root}/boot/loader/random-seed" bs=32 count=1
 
-    local boot_conf kernel kernel_default= ucode initrd_prefix
+    local boot_conf kernel kernel_default= ucode initrd_prefix append=
     get_initrd_prefix
     for kernel in "${kernels[@]}"; do
         kernel_default="${kernel_default:-${kernel}}"
+        append="${appends[all]:-${appends["${kernel}"]:-${appends[default]:-}}}"
+        if [[ "${append}" ]]; then
+            append=" ${append}"
+        fi
         {
             echo "title ${distro_stylised}"
             echo "linux /vmlinuz-${kernel}"
             printf 'initrd /%s\n' "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
-            echo "options root=UUID=${table_part_uuids[root]} rw"
+            echo "options root=UUID=${table_part_uuids[root]} rw${append}"
         } > "${path_root}/boot/loader/entries/${distro_safe}-${kernel}.conf"
     done
     printf '%s %s\n' \
@@ -1954,6 +1959,7 @@ help_aimager() {
         'initrd-maker [maker]' 'initrd maker: booster(default)/mkinitcpio/dracut, initrd-maker is installed before all other packages after bootstrapping so aimager could config it to only build universal images, and it would only be installed if initramfs virtual package has no provider, that is, if you use --reuse-root to do incremental build then in most cases later --initrd-maker has no use. ' \
         'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
+        'append-[kernel] [append]' 'append options to kernel cmdline after root=xxxx rw, specify [kernel] for a specific kernel, special [kernel] value: "all" for all kernels (replacing other), "default" for all kernels (being replaced by other)'\
         'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
@@ -2112,6 +2118,10 @@ aimager_cli() {
         '--install-pkgs')
             IFS=', ' read -r -a splitted <<< "$2"
             install_pkgs+=("${splitted[@]}")
+            shift
+            ;;
+        '--append-'*)
+            appends["${1:9}"]="$2"
             shift
             ;;
         '--mkfs-arg')
