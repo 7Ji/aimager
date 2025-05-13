@@ -534,6 +534,7 @@ board_x86_legacy() {
         [amd-ucode]='amd-ucode.img'
         [intel-ucode]='intel-ucode.img'
     )
+    install_pkgs+=('syslinux')
 }
 
 _board_aarch64_no_table() {
@@ -1647,9 +1648,8 @@ child_setup_bootloader_extlinux() {
         get_append
         {
             printf "${format_indent0}" 'LABEL' "${kernel}"
-            printf "${format_indent1}" \
-                'LINUX' "${boot_prefix}/vmlinuz-${kernel}" \
-                'INITRD' "${boot_prefix}/${initrd_prefix}${kernel}.img"
+            printf "${format_indent1}" 'LINUX' "${boot_prefix}/vmlinuz-${kernel}"
+            printf "    INITRD      ${boot_prefix}/%s\n" "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
             fdtdir="/dtbs/${kernel}"
             if [[ -d "${path_root}/boot${fdtdir}" ]]; then
                 printf "${format_indent1}" 'FDTDIR' "${boot_prefix}${fdtdir}"
