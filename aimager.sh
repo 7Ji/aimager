@@ -529,11 +529,11 @@ board_x86_legacy() {
     if [[ -z "${table:-}" ]]; then
         table='=dos_16g_root'
     fi
-    #kernels+=('linux' 'linux-lts')
-    #ucodes+=(
-    #    [amd-ucode]='amd-ucode.img'
-    #    [intel-ucode]='intel-ucode.img'
-    #)
+    kernels+=('linux' 'linux-lts')
+    ucodes+=(
+        [amd-ucode]='amd-ucode.img'
+        [intel-ucode]='intel-ucode.img'
+    )
 }
 
 _board_aarch64_no_table() {
@@ -1578,6 +1578,14 @@ get_append() {
     fi
 }
 
+get_boot_prefix() {
+    if [[ "${table_part_infos[boot]:-}" ]]; then
+        boot_prefix=''
+    else
+        boot_prefix='/boot'
+    fi
+}
+
 child_setup_bootloader_systemd_boot() {
     # we cannot use 'bootctl --graceful install' as --graceful has no effect:
     # systemd since 90cf998875a
@@ -1593,26 +1601,27 @@ child_setup_bootloader_systemd_boot() {
         'timeout' '3' \
         > "${path_root}/boot/loader/loader.conf"
 
-    local kernel initrd_prefix append fdtdir fdtfile
+    local kernel boot_prefix initrd_prefix append fdtdir fdtfile
+    get_boot_prefix
     get_initrd_prefix
     for kernel in "${kernels[@]}"; do
         get_append
         {
             echo "title ${distro_stylised}"
-            echo "linux /vmlinuz-${kernel}"
-            printf 'initrd /%s\n' "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
-            fdtdir="/boot/dtbs/${kernel}"
-            if [[ -d "${path_root}${fdtdir}" ]]; then
-                echo "fdtdir ${fdtdir}"
+            echo "linux ${boot_prefix}/vmlinuz-${kernel}"
+            printf "initrd ${boot_prefix}/%s\n" "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
+            fdtdir="/dtbs/${kernel}"
+            if [[ -d "${path_root}/boot/${fdtdir}" ]]; then
+                echo "fdtdir ${boot_prefix}${fdtdir}"
             fi
             case "${fdt:-}" in
             '/'*)
-                echo "fdt ${fdt}"
+                echo "fdt ${boot_prefix}${fdt}"
                 ;;
             '')
                 ;;
             *)
-                echo "fdt ${fdtdir}/${fdt}"
+                echo "fdt ${boot_prefix}${fdtdir}/${fdt}"
                 ;;
             esac
             echo "options root=UUID=${table_part_uuids[root]} rw${append}"
@@ -1631,27 +1640,28 @@ child_setup_bootloader_extlinux() {
         'TIMEOUT' '30' \
         'DEFAULT' "${kernels[0]}" \
         > "${extlinux}"
-    local kernel initrd_prefix append fdtdir fdtfile
+    local kernel boot_prefix initrd_prefix append fdtdir fdtfile boot_prefix
+    get_boot_prefix
     get_initrd_prefix
     for kernel in "${kernels[@]}"; do
         get_append
         {
             printf "${format_indent0}" 'LABEL' "${kernel}"
             printf "${format_indent1}" \
-                'LINUX' "/vmlinuz-${kernel}" \
-                'INITRD' "/${initrd_prefix}${kernel}.img"
-            fdtdir="/boot/dtbs/${kernel}"
-            if [[ -d "${path_root}${fdtdir}" ]]; then
-                printf "${format_indent1}" 'FDTDIR' "${fdtdir}"
+                'LINUX' "${boot_prefix}/vmlinuz-${kernel}" \
+                'INITRD' "${boot_prefix}/${initrd_prefix}${kernel}.img"
+            fdtdir="/dtbs/${kernel}"
+            if [[ -d "${path_root}/boot${fdtdir}" ]]; then
+                printf "${format_indent1}" 'FDTDIR' "${boot_prefix}${fdtdir}"
             fi
             case "${fdt:-}" in
             '/'*)
-                printf "${format_indent1}" 'FDT' "${fdt}"
+                printf "${format_indent1}" 'FDT' "${boot_prefix}${fdt}"
                 ;;
             '')
                 ;;
             *)
-                printf "${format_indent1}" 'FDT' "${fdtdir}/${fdt}"
+                printf "${format_indent1}" 'FDT' "${boot_prefix}${fdtdir}/${fdt}"
                 ;;
             esac
             printf "${format_indent1}" 'APPEND' "root=UUID=${table_part_uuids[root]} rw${append}"
