@@ -1674,6 +1674,8 @@ child_setup_bootloader_syslinux() {
         log_error 'Table label != dos, cannot install syslinux'
         return 1
     fi
+    mkdir -p "${path_root}/boot/syslinux"
+    cp "${path_root}"/{usr/lib/syslinux/bios/*.c32,boot/syslinux/}
     dd bs=440 count=1 conv=notrunc if="${path_root}/usr/lib/syslinux/bios/mbr.bin" of="${path_build}/head.img"
     child_setup_bootloader_extlinux
 }
