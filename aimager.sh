@@ -1706,6 +1706,17 @@ child_setup_bootloader() {
     fi
 }
 
+child_setup_hostname() {
+    echo "${board:-${distro_safe:-aimager}}" > "${path_root}/etc/hostname"
+}
+
+child_setup_locale() {
+    local LANG=en_GB.UTF-8
+    sed -i "s/^#\(${LANG}\) /\1 /" "${path_root}/etc/locale.gen"
+    chroot "${path_root}" locale-gen
+    echo "${LANG}" > "${path_root}/etc/locale.conf"
+}
+
 child_setup() {
     child_setup_initrd_maker
     if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}" ]]; then
@@ -1720,6 +1731,8 @@ child_setup() {
     fi
     child_setup_fstab
     child_setup_bootloader
+    child_setup_hostname
+    child_setup_locale
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
