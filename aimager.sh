@@ -481,12 +481,7 @@ table_common_gpt_1g_esp_16g_root_x86_64() {
     table_part root '' 16G '"Linux root (x86-64)"' ''
 }
 
-table_common_dos_16g_root() {
-    table_dos_header
-    table_part root '' 16G linux ',bootable'
-}
-
-table_common_dos_1g_esp_16g_root_aarch64() {
+table_common_dos_1g_esp_16g_root() {
     table_common_dos_1g_esp
     table_part root '' 16G linux ''
 }
@@ -527,14 +522,14 @@ board_x86_legacy() {
     arch_target='i686'
     bootloader='syslinux'
     if [[ -z "${table:-}" ]]; then
-        table='=dos_16g_root'
+        table='=dos_1g_esp_16g_root'
     fi
     kernels+=('linux' 'linux-lts')
     ucodes+=(
         [amd-ucode]='amd-ucode.img'
         [intel-ucode]='intel-ucode.img'
     )
-    install_pkgs+=('syslinux')
+    install_pkgs+=('syslinux' 'mtools')
 }
 
 _board_aarch64_no_table() {
@@ -570,7 +565,7 @@ board_amlogic_s9xxx() {
     _board_aarch64_no_table
     bootloader='u-boot'
     if [[ -z "${table:-}" ]]; then
-        table='=dos_1g_esp_16g_root_aarch64'
+        table='=dos_1g_esp_16g_root'
     fi
     fdt='amlogic/PLEASE_SET_ME.dtb'
 }
@@ -1630,10 +1625,9 @@ child_setup_bootloader_systemd_boot() {
     done
 }
 
-child_setup_bootloader_extlinux() {
-    local extlinux="${path_root}/boot/extlinux"
-    mkdir -p "${extlinux}"
-    extlinux+='/extlinux.conf'
+child_setup_bootloader_extlinux() { #1 config
+    mkdir -p "${1%/*}"
+    local extlinux="$1"
     local format_indent0='%-12s%s\n'
     local format_indent1='    %-12s%s\n'
     printf "${format_indent0}" \
@@ -1669,20 +1663,36 @@ child_setup_bootloader_extlinux() {
     done
 }
 
+create_part_boot_empty() {
+    truncate -s "${table_part_sizes[boot]}"M "$1"
+    mkfs.fat -i "${table_part_uuids[boot]::4}${table_part_uuids[boot]:5}" \
+        ${mkfs_args[boot]:-} "$1"
+}
+
 child_setup_bootloader_syslinux() {
     if [[ "${table_label}" != 'dos' ]]; then
         log_error 'Table label != dos, cannot install syslinux'
         return 1
     fi
+    if [[ -z "${table_part_infos[boot]:-}" ]]; then
+        log_error 'No dedicated boot partition, cannot install syslinux'
+        return 1
+    fi
     mkdir -p "${path_root}/boot/syslinux"
-    cp "${path_root}"/{usr/lib/syslinux/bios/*.c32,boot/syslinux/}
     dd bs=440 count=1 conv=notrunc if="${path_root}/usr/lib/syslinux/bios/mbr.bin" of="${path_build}/head.img"
-    child_setup_bootloader_extlinux
+
+    local boot_img="${path_root}/tmp/boot.img"
+    create_part_boot_empty "${boot_img}"
+    mmd -i "${boot_img}" syslinux
+    chroot "${path_root}" syslinux -i /tmp/boot.img -d syslinux
+    mcopy -oi "${boot_img}" "${path_root}/usr/lib/syslinux/bios/"*.c32 ::syslinux/
+    mv "${boot_img}" "${path_build}/boot.img"
+    child_setup_bootloader_extlinux "${path_build}/boot/syslinux/syslinux.cfg"
 }
 
 child_setup_bootloader_u_boot() {
     log_warn 'U-boot installtion not implemented, only extlinux generated'
-    child_setup_bootloader_extlinux
+    child_setup_bootloader_extlinux "${path_root}/boot/extlinux/extlinux.conf"
 }
 
 child_setup_bootloader() {
@@ -1884,9 +1894,11 @@ create_part_boot_img() {
     fi
     local path_out="${out_prefix}part-boot.img"
     log_info "Creating boot partition image '${path_out}'..."
-    truncate -s "${table_part_sizes[boot]}"M "${path_out}.temp"
-    mkfs.fat -i "${table_part_uuids[boot]::4}${table_part_uuids[boot]:5}" \
-        ${mkfs_args[boot]:-} "${path_out}.temp"
+    if [[ -f "${path_build}/boot.img" ]]; then
+        mv "${path_build}/boot.img" "${path_out}.temp"
+    else
+        create_part_boot_empty "${path_out}.temp"
+    fi
     mcopy -osi "${path_out}.temp" "${path_root}/boot/"* ::
     mv "${path_out}"{.temp,}
     created['part-boot.img']='y'
