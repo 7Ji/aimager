@@ -516,6 +516,22 @@ board_x64_uefi() {
     )
 }
 
+board_x64_legacy() {
+    _board_booster
+    distro='Arch Linux'
+    arch_target='x86_64'
+    bootloader='syslinux'
+    if [[ -z "${table:-}" ]]; then
+        table='=dos_1g_esp_16g_root'
+    fi
+    kernels+=('linux' 'linux-lts')
+    ucodes+=(
+        [amd-ucode]='amd-ucode.img'
+        [intel-ucode]='intel-ucode.img'
+    )
+    install_pkgs+=('syslinux' 'mtools')
+}
+
 board_x86_legacy() {
     _board_booster
     distro='Arch Linux 32'
