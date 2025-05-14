@@ -1684,10 +1684,10 @@ child_setup_bootloader_syslinux() {
     local boot_img="${path_root}/tmp/boot.img"
     create_part_boot_empty "${boot_img}"
     mmd -i "${boot_img}" syslinux
-    chroot "${path_root}" syslinux -i /tmp/boot.img -d syslinux
     mcopy -oi "${boot_img}" "${path_root}/usr/lib/syslinux/bios/"*.c32 ::syslinux/
+    chroot "${path_root}" syslinux -i /tmp/boot.img -d syslinux
     mv "${boot_img}" "${path_build}/boot.img"
-    child_setup_bootloader_extlinux "${path_build}/boot/syslinux/syslinux.cfg"
+    child_setup_bootloader_extlinux "${path_root}/boot/syslinux/syslinux.cfg"
 }
 
 child_setup_bootloader_u_boot() {
