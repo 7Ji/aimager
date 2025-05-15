@@ -1788,6 +1788,7 @@ child_setup_network() {
            '[Network]'\
            'DHCP=yes'\
            > "${path_root}/etc/systemd/network/20-wired.network"
+    rm -f "${path_root}/etc/resolv.conf"
     ln -s /run/systemd/resolve/stub-resolv.conf "${path_root}/etc/resolv.conf"
 }
 
