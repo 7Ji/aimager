@@ -1743,7 +1743,7 @@ child_setup_locale() {
     fi
     sed -i "${pattern}" "${path_root}/etc/locale.gen"
     chroot "${path_root}" locale-gen
-    echo "${locale_use}" > "${path_root}/etc/locale.conf"
+    echo "LANG=${locale_use}" > "${path_root}/etc/locale.conf"
 }
 
 child_setup_users() {
