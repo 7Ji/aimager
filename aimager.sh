@@ -1085,6 +1085,9 @@ configure_table() {
 }
 
 configure_pkgs() {
+    if (( ${#sudo_groups[@]} )); then
+        install_pkgs+=(sudo)
+    fi
     local pkgs_allowed=()
     local pkg
     for pkg in "${install_pkgs[@]}"; do
@@ -2183,6 +2186,7 @@ help_aimager() {
         'locales [locales]' 'comma-seperated list of locales to enable, shorthand for multiple --locale, can be specified multiple times, e.g. zh_CN.UTF-8,en_US.UTF-8'\
         'useradd [args]' 'add a user, the argument is passed to useradd command without change without quoting, space is meaningful, e.g. "-G wheel -m nomad7ji" to create a user nomad7ji with supplementary group wheel and create its home folder, "user" to simply create a user "user", "-G wheel,video,audio -p pa3QXjWku1bJQ -m alarm" to create a user alarm with supplementary group wheel, video, audio, with password "alarm_please_change_me" (got with perl -e '"'print crypt(\"alarm_please_change_me\", \"password\")'"')'\
         'chpasswd [conent]' 'change user passwords, [content] would be feed into stdin of chpasswd without change without quoting, should be line-seperated of [username]:[password] pairs, e.g. root:password'\
+        'sudo-group [group]' 'allow a certain group to run sudo, can be specified multiple times, if set sudo would be installed implicitly, e.g. wheel'
         'hostname [hostname]' 'unless specified, default: board name converted to lowercase then with only [a-z0-9-], or distro safe name, or empty'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
@@ -2365,6 +2369,10 @@ aimager_cli() {
             ;;
         '--chpasswd')
             chpasswd_content="$2"
+            shift
+            ;;
+        '--sudo-group')
+            sudo_groups+=("$2")
             shift
             ;;
         '--hostname')
