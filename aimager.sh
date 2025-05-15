@@ -2104,9 +2104,9 @@ help_aimager() {
         'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
         'append-[kernel] [append]' 'append options to kernel cmdline after root=xxxx rw, specify [kernel] for a specific kernel, special [kernel] value: "all" for all kernels (replacing other), "default" for all kernels (being replaced by other)'\
-        'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
+        'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
