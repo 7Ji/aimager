@@ -2023,6 +2023,19 @@ create_part_home_img() {
     log_info "Created home partition image '${path_out}'"
 }
 
+create_part_swap_img() {
+    if [[ "${created['part-swap.img']:-}" ]]; then
+        return
+    fi
+    local path_out="${out_prefix}part-swap.img"
+    log_info "Creating swap partition image '${path_out}'..."
+    truncate -s "${table_part_sizes[swap]}"M "${path_out}.temp"
+    mkswap -U "${table_part_uuids[swap]}" ${mkfs_args[swap]:-} "${path_out}.temp"
+    mv "${path_out}"{.temp,}
+    created['part-swap.img']='y'
+    log_info "Created swap partition image '${path_out}'"
+}
+
 create_disk_img() {
     if [[ "${created['disk.img']:-}" ]]; then
         return
