@@ -1522,6 +1522,11 @@ child_setup_fstab() {
             part_options='none'
             part_pass=0
             ;;
+        'home')
+            part_type='ext4'
+            part_options='rw,noatime,defaults'
+            part_pass=2
+            ;;
         *)
             part_type='ext4'
             part_options='rw,noatime,defaults'
