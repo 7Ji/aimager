@@ -582,10 +582,6 @@ board_aarch64_uefi() {
     use_systemd_boot
 }
 
-board_phytium_d2000() {
-    board_aarch64_uefi
-}
-
 board_aarch64_uboot() {
     use_alarm_aarch64
     use_linux_aarch64_7ji
