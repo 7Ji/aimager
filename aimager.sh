@@ -1770,6 +1770,20 @@ child_setup_hostname() {
     echo "${hostname_safe,,}" > "${path_root}/etc/hostname"
 }
 
+child_setup_network() {
+    child_setup_hostname
+    chroot "${path_root}" systemctl enable systemd-{network,resolve}d
+    printf '%s\n'\
+	    '[Match]'\
+	    'Name=en* eth*'\
+	    ''\
+	   '[Network]'\
+	   'DHCP=yes'\
+	   > "${path_root}/etc/systemd/network/20-wired.network"
+    ln -s /run/systemd/resolve/stub-resolv.conf "${path_root}/etc/resolv.conf"
+}
+
+
 child_setup() {
     child_setup_initrd_maker
     if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}${bootloader_pkgs[*]}" ]]; then
@@ -1786,7 +1800,7 @@ child_setup() {
     child_setup_bootloader
     child_setup_locale
     child_setup_users
-    child_setup_hostname
+    child_setup_network
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
