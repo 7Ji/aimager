@@ -112,6 +112,7 @@ aimager_init() {
     bootloader_pkgs=()
     declare -gA appends
     install_pkgs=()
+    useradds=()
     hostname_original=''
     locales=()
     declare -gA mkfs_args
@@ -1727,6 +1728,13 @@ child_setup_bootloader() {
     done
 }
 
+child_setup_users() {
+    local useradd_args
+    for useradd_args in "${useradds[@]}"; do
+        chroot "${path_root}" useradd ${useradd_args}
+    done
+}
+
 child_setup_hostname() {
     local hostname_safe=$(sed 's/[^A-Za-z0-9-]//' <<< "${hostname_original:-${board:-${distro_safe:-}}}")
     hostname_safe="${hostname_safe:-aimager}"
@@ -2130,6 +2138,7 @@ help_aimager() {
         'append-[kernel] [append]' 'append options to kernel cmdline after root=xxxx rw, specify [kernel] for a specific kernel, special [kernel] value: "all" for all kernels (replacing other), "default" for all kernels (being replaced by other)'\
         'locale [locale]' 'enable locale, can be specified multiple times, all locales would be enabled but only the first locale would be set in /etc/locale.conf, e.g. en_GB.UTF-8'\
         'locales [locales]' 'comma-seperated list of locales to enable, shorthand for multiple --locale, can be specified multiple times, e.g. zh_CN.UTF-8,en_US.UTF-8'\
+        'useradd [args]' 'add a user, the argument is passed to useradd command without change without quoting, space is meaningful, e.g. "-G wheel -m nomad7ji" to create a user nomad7ji with supplementary group wheel and create its home folder, "user" to simply create a user "user", "-G wheel,video,audio -p pa3QXjWku1bJQ -m alarm" to create a user alarm with supplementary group wheel, video, audio, with password "alarm_please_change_me" (got with perl -e '"'print crypt(\"alarm_please_change_me\", \"password\")'"')'\
         'hostname [hostname]' 'unless specified, default: board name converted to lowercase then with only [a-z0-9-], or distro safe name, or empty'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
@@ -2304,6 +2313,10 @@ aimager_cli() {
         '--locales')
             IFS=',' read -r -a splitted <<< "$2"
             locales+=("${splitted[@]}")
+            shift
+            ;;
+        '--useradd')
+            useradds+=("$2")
             shift
             ;;
         '--hostname')
