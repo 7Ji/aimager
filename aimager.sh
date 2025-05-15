@@ -1774,12 +1774,12 @@ child_setup_network() {
     child_setup_hostname
     chroot "${path_root}" systemctl enable systemd-{network,resolve}d
     printf '%s\n'\
-	    '[Match]'\
-	    'Name=en* eth*'\
-	    ''\
-	   '[Network]'\
-	   'DHCP=yes'\
-	   > "${path_root}/etc/systemd/network/20-wired.network"
+           '[Match]'\
+           'Name=en* eth*'\
+           ''\
+           '[Network]'\
+           'DHCP=yes'\
+           > "${path_root}/etc/systemd/network/20-wired.network"
     ln -s /run/systemd/resolve/stub-resolv.conf "${path_root}/etc/resolv.conf"
 }
 
