@@ -1906,6 +1906,20 @@ run_child_and_wait() {
 
 clean() {
     log_info 'Cleaning up before exiting...'
+    log_info 'Removing intermediate targets...'
+    local name path_out expanded=" ${creates[*]} "
+    for name in part-boot.img part-root.img part-home.img disk.img root.tar; do
+        path_out="${out_prefix}${name}"
+        if [[ ! -f "${path_out}" ]]; then
+            continue
+        fi
+        if [[ "${expanded}" == *" ${name} "* ]]; then
+            continue
+        fi
+        rm -f "${path_out}"
+        log_info "Removed intermediate target '${path_out}'"
+    done
+    log_info "Removing build dir '${path_build}'..."
     rm -rf "${path_build}"
 }
 
@@ -2063,12 +2077,6 @@ create_keyring_helper_tar() {
 }
 
 help_create() {
-    local name prefix=create_ creates=()
-    for name in $(declare -F); do
-        if [[ "${name}" == "${prefix}"* && ${#name} -gt 7 ]]; then
-            creates+=("${name:7}")
-        fi
-    done
     log_info \
         "Available to-be-created targets (_, -, . are inter-changable):"
     printf '%s:\n\t%s\n' \
