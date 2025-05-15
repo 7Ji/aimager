@@ -1737,9 +1737,9 @@ child_setup_locale() {
         has_locale='y'
     done
     if [[ -z "${has_locale}" ]]; then
-        log_warn 'No locale was set, using en_GB.UTF-8 by default, please set --locale if you want to change this'
-        pattern='s/#\(en_GB.UTF-8\) /\1 /'
-        locale_use=en_GB.UTF-8
+        log_warn 'No locale was set, using en_US.UTF-8 by default, please set --locale if you want to change this'
+        pattern='s/#\(en_US.UTF-8\) /\1 /'
+        locale_use=en_US.UTF-8
     fi
     sed -i "${pattern}" "${path_root}/etc/locale.gen"
     chroot "${path_root}" locale-gen
