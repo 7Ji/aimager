@@ -1717,7 +1717,7 @@ child_setup_bootloader_u_boot() {
 
 child_setup_bootloader() {
     local bootloader bootloader_func
-    for bootloader in "${!bootloaders[@]}"; do
+    for bootloader in "${bootloaders[@]}"; do
         bootloader_func="child_setup_bootloader_${bootloader/-/_}"
         if [[ $(type -t "${bootloader_func}") == function ]]; then
             "${bootloader_func}"
@@ -1742,11 +1742,11 @@ child_setup_locale() {
 
 child_setup() {
     child_setup_initrd_maker
-    if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}${bootloaders[*]}" ]]; then
+    if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}${bootloader_pkgs[*]}" ]]; then
         log_info \
             "Installing packages: ${install_pkgs[*]} ${kernels[*]} ${!ucodes[*]}"
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
-            --needed "${install_pkgs[@]}" "${kernels[@]}" "${!ucodes[@]}" ${bootloaders[*]}
+            --needed "${install_pkgs[@]}" "${kernels[@]}" "${!ucodes[@]}" "${bootloader_pkgs[@]}"
     fi
     child_revert_initrd_maker
     if [[ "${pacman_conf_append}" ]]; then
