@@ -2150,9 +2150,11 @@ help_aimager() {
         'to create an Arch Linux rootfs:' \
             '--distro arch --create root.tar' \
         'to create an EFI-bootable Arch Linux iamge:' \
-            '--board x64_uefi --create disk.img' \
-        'to create an u-boot bootable Arch Linux ARM image for Orange Pi 5 Plus:' \
-            '--board orangepi_5_plus --create disk.img' \
+            '--board x64-uefi --create disk.img' \
+        'to create an EFI-bootable Arch Linux ARM image:' \
+            '--board aarch64-uefi --create disk.img' \
+        'to create a U-boot bootable Arch Linux ARM image for Amlogic S9xxx TV boxes:' \
+            '--board amlogic-s9xxx --create disk.img' \
 
 }
 
