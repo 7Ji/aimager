@@ -113,6 +113,7 @@ aimager_init() {
     declare -gA appends
     install_pkgs=()
     useradds=()
+    chpasswd_content=''
     hostname_original=''
     locales=()
     declare -gA mkfs_args
@@ -1728,21 +1729,6 @@ child_setup_bootloader() {
     done
 }
 
-child_setup_users() {
-    local useradd_args
-    for useradd_args in "${useradds[@]}"; do
-        chroot "${path_root}" useradd ${useradd_args}
-    done
-}
-
-child_setup_hostname() {
-    local hostname_safe=$(sed 's/[^A-Za-z0-9-]//' <<< "${hostname_original:-${board:-${distro_safe:-}}}")
-    hostname_safe="${hostname_safe:-aimager}"
-    hostname_safe="${hostname_safe,,}"
-
-    echo "${hostname_safe,,}" > "${path_root}/etc/hostname"
-}
-
 child_setup_locale() {
     local locale_add locale_use= pattern has_locale=
     for locale_add in "${locales[@]}"; do
@@ -1760,6 +1746,24 @@ child_setup_locale() {
     echo "${locale_use}" > "${path_root}/etc/locale.conf"
 }
 
+child_setup_users() {
+    local useradd_args
+    for useradd_args in "${useradds[@]}"; do
+        chroot "${path_root}" useradd ${useradd_args}
+    done
+    if [[ "${chpasswd_content}" ]]; then
+        chroot "${path_root}" chpasswd <<< "${chpasswd_content}"
+    fi
+}
+
+child_setup_hostname() {
+    local hostname_safe=$(sed 's/[^A-Za-z0-9-]//' <<< "${hostname_original:-${board:-${distro_safe:-}}}")
+    hostname_safe="${hostname_safe:-aimager}"
+    hostname_safe="${hostname_safe,,}"
+
+    echo "${hostname_safe,,}" > "${path_root}/etc/hostname"
+}
+
 child_setup() {
     child_setup_initrd_maker
     if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}${bootloader_pkgs[*]}" ]]; then
@@ -1774,8 +1778,9 @@ child_setup() {
     fi
     child_setup_fstab
     child_setup_bootloader
-    child_setup_hostname
     child_setup_locale
+    child_setup_users
+    child_setup_hostname
     local overlay
     for overlay in "${overlays[@]}"; do
         bsdtar --acls --xattrs -xpf "${overlay}" -C "${path_root}"
@@ -2139,6 +2144,7 @@ help_aimager() {
         'locale [locale]' 'enable locale, can be specified multiple times, all locales would be enabled but only the first locale would be set in /etc/locale.conf, e.g. en_GB.UTF-8'\
         'locales [locales]' 'comma-seperated list of locales to enable, shorthand for multiple --locale, can be specified multiple times, e.g. zh_CN.UTF-8,en_US.UTF-8'\
         'useradd [args]' 'add a user, the argument is passed to useradd command without change without quoting, space is meaningful, e.g. "-G wheel -m nomad7ji" to create a user nomad7ji with supplementary group wheel and create its home folder, "user" to simply create a user "user", "-G wheel,video,audio -p pa3QXjWku1bJQ -m alarm" to create a user alarm with supplementary group wheel, video, audio, with password "alarm_please_change_me" (got with perl -e '"'print crypt(\"alarm_please_change_me\", \"password\")'"')'\
+        'chpasswd [conent]' 'change user passwords, [content] would be feed into stdin of chpasswd without change without quoting, should be line-seperated of [username]:[password] pairs, e.g. root:password'\
         'hostname [hostname]' 'unless specified, default: board name converted to lowercase then with only [a-z0-9-], or distro safe name, or empty'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
@@ -2317,6 +2323,10 @@ aimager_cli() {
             ;;
         '--useradd')
             useradds+=("$2")
+            shift
+            ;;
+        '--chpasswd')
+            chpasswd_content="$2"
             shift
             ;;
         '--hostname')
