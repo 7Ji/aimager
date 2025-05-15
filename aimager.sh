@@ -114,6 +114,7 @@ aimager_init() {
     install_pkgs=()
     useradds=()
     chpasswd_content=''
+    sudo_groups=()
     hostname_original=''
     locales=()
     declare -gA mkfs_args
@@ -1760,6 +1761,10 @@ child_setup_users() {
     if [[ "${chpasswd_content}" ]]; then
         chroot "${path_root}" chpasswd <<< "${chpasswd_content}"
     fi
+    local sudo_group
+    for sudo_group in "${sudo_groups[@]}"; do
+        echo "%w${sudo_group} ALL=(ALL:ALL) NOPASSWD: ALL" >> "${path_root}/etc/sudoers.d/groups-nopasswd.conf"
+    done
 }
 
 child_setup_hostname() {
