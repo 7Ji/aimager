@@ -1528,7 +1528,8 @@ child_setup_fstab() {
             part_pass=1
             ;;
         esac
-        printf '# aimager-part: %s\nUUID=%-36s %-5s %-5s %-20s 0 %u\n' \
+        printf '# aimager@%s: %s\nUUID=%-36s %-5s %-5s %-20s 0 %u\n' \
+            "${part_order}" \
             "${table_part_infos["${part_order}"]}" \
             "${table_part_uuids["${part_order}"]}" \
             "${part_mount}" \
