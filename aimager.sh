@@ -113,6 +113,7 @@ aimager_init() {
     declare -gA appends
     install_pkgs=()
     hostname_original=''
+    locales=()
     declare -gA mkfs_args
     out_prefix=''
     overlays=()
@@ -1727,7 +1728,7 @@ child_setup_bootloader() {
 }
 
 child_setup_hostname() {
-    local hostname_safe=$(sed 's/[^a-z0-9-]//' <<< "${hostname_original:-${board:-${distro_safe:-}}}")
+    local hostname_safe=$(sed 's/[^A-Za-z0-9-]//' <<< "${hostname_original:-${board:-${distro_safe:-}}}")
     hostname_safe="${hostname_safe:-aimager}"
     hostname_safe="${hostname_safe,,}"
 
@@ -1735,10 +1736,17 @@ child_setup_hostname() {
 }
 
 child_setup_locale() {
-    local LANG=en_GB.UTF-8
-    sed -i "s/^#\(${LANG}\) /\1 /" "${path_root}/etc/locale.gen"
-    chroot "${path_root}" locale-gen
-    echo "${LANG}" > "${path_root}/etc/locale.conf"
+    local locale_add locale_use= pattern has_locale=
+    for locale_add in "${locales[@]}"; do
+        pattern+='s/#\('"${locale_add}"'\) /\1 /;'
+        locale_use="${locale_use:-${locale_add}}"
+        has_locale='y'
+    done
+    if [[ "${has_locale}" ]]; then
+        sed -i "${pattern}" "${path_root}/etc/locale.gen"
+        chroot "${path_root}" locale-gen
+        echo "${locale_use}" > "${path_root}/etc/locale.conf"
+    fi
 }
 
 child_setup() {
@@ -2109,6 +2117,8 @@ help_aimager() {
         'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
         'append-[kernel] [append]' 'append options to kernel cmdline after root=xxxx rw, specify [kernel] for a specific kernel, special [kernel] value: "all" for all kernels (replacing other), "default" for all kernels (being replaced by other)'\
+        'locale [locale]' 'enable locale, can be specified multiple times, all locales would be enabled but only the first locale would be set in /etc/locale.conf, e.g. en_GB.UTF-8'\
+        'locales [locales]' 'comma-seperated list of locales to enable, shothand for multiple --locale, can be specified multiple times, e.g. zh_CN.UTF-8,en_US.UTF-8'\
         'hostname [hostname]' 'unless specified, default: board name converted to lowercase then with only [a-z0-9-], or distro safe name, or empty'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
@@ -2272,6 +2282,15 @@ aimager_cli() {
             ;;
         '--append-'*)
             appends["${1:9}"]="$2"
+            shift
+            ;;
+        '--locale')
+            locales+=("$2")
+            shift
+            ;;
+        '--locales')
+            IFS=',' read -r -a splitted <<< "$2"
+            locales+=("${splitted[@]}")
             shift
             ;;
         '--hostname')
