@@ -108,6 +108,8 @@ aimager_init() {
     initrd_maker=''
     kernels=()
     declare -gA ucodes
+    bootloaders=()
+    bootloader_pkgs=()
     declare -gA appends
     install_pkgs=()
     declare -gA mkfs_args
@@ -497,75 +499,87 @@ help_table() {
     return
 }
 
-_board_booster() {
-    initrd_maker="${initrd_maker:-booster}"
-}
-
-board_x64_uefi() {
-    _board_booster
+use_arch_x64() {
     distro='Arch Linux'
     arch_target='x86_64'
-    bootloader='systemd-boot'
-    if [[ -z "${table:-}" ]]; then
-        table='=gpt_1g_esp_16g_root_x86_64'
-    fi
-    kernels+=('linux' 'linux-lts')
-    ucodes+=(
-        [amd-ucode]='amd-ucode.img'
-        [intel-ucode]='intel-ucode.img'
-    )
 }
 
-board_x64_legacy() {
-    _board_booster
-    distro='Arch Linux'
-    arch_target='x86_64'
-    bootloader='syslinux'
-    if [[ -z "${table:-}" ]]; then
-        table='=dos_1g_esp_16g_root'
-    fi
-    kernels+=('linux' 'linux-lts')
-    ucodes+=(
-        [amd-ucode]='amd-ucode.img'
-        [intel-ucode]='intel-ucode.img'
-    )
-    install_pkgs+=('syslinux' 'mtools')
-}
-
-board_x86_legacy() {
-    _board_booster
+use_arch32_i686() {
     distro='Arch Linux 32'
     arch_target='i686'
-    bootloader='syslinux'
-    if [[ -z "${table:-}" ]]; then
-        table='=dos_1g_esp_16g_root'
-    fi
-    kernels+=('linux' 'linux-lts')
-    ucodes+=(
-        [amd-ucode]='amd-ucode.img'
-        [intel-ucode]='intel-ucode.img'
-    )
-    install_pkgs+=('syslinux' 'mtools')
 }
 
-_board_aarch64_no_table() {
-    _board_booster
+use_alarm_aarch64() {
     distro='Arch Linux ARM'
     arch_target='aarch64'
+}
+
+use_linux_and_lts() {
+    kernels+=('linux' 'linux-lts')
+}
+
+use_linux_aarch64_7ji() {
     add_repos+=('7Ji')
     kernels+=('linux-aarch64-7ji')
 }
 
-_board_aarch64() {
-    _board_aarch64_no_table
-    if [[ -z "${table:-}" ]]; then
-        table='=gpt_1g_esp_16g_root_aarch64'
-    fi
+use_ucodes() {
+    ucodes+=(
+        [amd-ucode]='amd-ucode.img'
+        [intel-ucode]='intel-ucode.img'
+    )
+}
+
+use_booster() {
+    initrd_maker="${initrd_maker:-booster}"
+}
+
+use_systemd_boot() {
+    bootloaders+=('systemd-boot')
+}
+
+use_syslinux() {
+    bootloaders+=('syslinux')
+    bootloader_pkgs+=('syslinux' 'mtools')
+}
+
+use_u_boot() {
+    bootloaders+=('u-boot')
+}
+
+board_x64_uefi() {
+    use_arch_x64
+    use_linux_and_lts
+    use_ucodes
+    table="${table:-=gpt_1g_esp_16g_root_x86_64}"
+    use_booster
+    use_systemd_boot
+}
+
+board_x64_legacy() {
+    use_arch_x64
+    use_linux_and_lts
+    use_ucodes
+    table="${table:-=dos_1g_esp_16g_root}"
+    use_booster
+    use_syslinux
+}
+
+board_x86_legacy() {
+    use_arch32_i686
+    use_linux_and_lts
+    use_ucodes
+    table="${table:-=dos_1g_esp_16g_root}"
+    use_booster
+    use_syslinux
 }
 
 board_aarch64_uefi() {
-    _board_aarch64
-    bootloader='systemd-boot'
+    use_alarm_aarch64
+    use_linux_aarch64_7ji
+    table="${table:-=gpt_1g_esp_16g_root_aarch64}"
+    use_booster
+    use_systemd_boot
 }
 
 board_phytium_d2000() {
@@ -573,37 +587,20 @@ board_phytium_d2000() {
 }
 
 board_aarch64_uboot() {
-    _board_aarch64
-    bootloader='u-boot'
+    use_alarm_aarch64
+    use_linux_aarch64_7ji
+    table="${table:-=gpt_1g_esp_16g_root_aarch64}"
+    use_booster
+    use_u_boot
 }
 
 board_amlogic_s9xxx() {
-    _board_aarch64_no_table
-    bootloader='u-boot'
-    if [[ -z "${table:-}" ]]; then
-        table='=dos_1g_esp_16g_root'
-    fi
+    use_alarm_aarch64
+    use_linux_aarch64_7ji
+    table="${table:-=dos_1g_esp_16g_root}"
     fdt='amlogic/PLEASE_SET_ME.dtb'
-}
-
-board_orangepi_5_family() {
-    board_aarch64_uboot
-}
-
-board_orangepi_5() {
-    board_orangepi_5_family
-}
-
-board_orangepi_5_plus() {
-    board_orangepi_5_family
-}
-
-board_orangepi_5_max() {
-    board_orangepi_5_family
-}
-
-board_orangepi_5_pro() {
-    board_orangepi_5_family
+    use_booster
+    use_u_boot
 }
 
 help_board() {
@@ -1695,9 +1692,16 @@ child_setup_bootloader_syslinux() {
         return 1
     fi
     mkdir -p "${path_root}/boot/syslinux"
+    if [[ -f "${path_build}/head.img" ]]; then
+        log_error 'There is already head.img, cannot install syslinux as it would not be the only one occupying disk head'
+        return 1
+    fi
     dd bs=440 count=1 conv=notrunc if="${path_root}/usr/lib/syslinux/bios/mbr.bin" of="${path_build}/head.img"
-
     local boot_img="${path_root}/tmp/boot.img"
+    if [[ -f "${boot_img}" ]]; then
+        log_error 'There is already boot.img, cannot install syslinux as it would not be the only one occupying boot partition head'
+        return 1
+    fi
     create_part_boot_empty "${boot_img}"
     mmd -i "${boot_img}" syslinux
     mcopy -oi "${boot_img}" "${path_root}/usr/lib/syslinux/bios/"*.c32 ::syslinux/
@@ -1712,14 +1716,17 @@ child_setup_bootloader_u_boot() {
 }
 
 child_setup_bootloader() {
-    local bootloader_func="child_setup_bootloader_${bootloader/-/_}"
-    if [[ $(type -t "${bootloader_func}") == function ]]; then
-        "${bootloader_func}"
-    else
-        log_error "Bootloader '${bootloader}' is not supported, supported: " \
-            'systemd-boot, syslinux, u-boot'
-        return 1
-    fi
+    local bootloader bootloader_func
+    for bootloader in "${!bootloaders[@]}"; do
+        bootloader_func="child_setup_bootloader_${bootloader/-/_}"
+        if [[ $(type -t "${bootloader_func}") == function ]]; then
+            "${bootloader_func}"
+        else
+            log_error "Bootloader '${bootloader}' is not supported, supported: " \
+                'systemd-boot, syslinux, u-boot'
+            return 1
+        fi
+    done
 }
 
 child_setup_hostname() {
@@ -1735,11 +1742,11 @@ child_setup_locale() {
 
 child_setup() {
     child_setup_initrd_maker
-    if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}" ]]; then
+    if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}${bootloaders[*]}" ]]; then
         log_info \
             "Installing packages: ${install_pkgs[*]} ${kernels[*]} ${!ucodes[*]}"
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
-            --needed "${install_pkgs[@]}" "${kernels[@]}" "${!ucodes[@]}"
+            --needed "${install_pkgs[@]}" "${kernels[@]}" "${!ucodes[@]}" ${bootloaders[*]}
     fi
     child_revert_initrd_maker
     if [[ "${pacman_conf_append}" ]]; then
