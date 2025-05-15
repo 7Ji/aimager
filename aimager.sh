@@ -112,6 +112,7 @@ aimager_init() {
     bootloader_pkgs=()
     declare -gA appends
     install_pkgs=()
+    hostname_original=''
     declare -gA mkfs_args
     out_prefix=''
     overlays=()
@@ -1726,7 +1727,11 @@ child_setup_bootloader() {
 }
 
 child_setup_hostname() {
-    echo "${board:-${distro_safe:-aimager}}" > "${path_root}/etc/hostname"
+    local hostname_safe=$(sed 's/[^a-z0-9-]//' <<< "${hostname_original:-${board:-${distro_safe:-}}}")
+    hostname_safe="${hostname_safe:-aimager}"
+    hostname_safe="${hostname_safe,,}"
+
+    echo "${hostname_safe,,}" > "${path_root}/etc/hostname"
 }
 
 child_setup_locale() {
@@ -2104,6 +2109,7 @@ help_aimager() {
         'install-pkg [pkg]' 'install a generic package after bootstrapping, can be specified multiple times, some packages would be filtered if listed here, these include: initrd-maker which should be declared in --initrd-maker, keyring which should be declared in --add-repo, kernel which should be declared in install-kernel, etc'\
         'install-pkgs [pkgs]' 'comma-seperated list of packages to install after bootstrapping, shorthand for multiple --install-pkg, can be specified multiple times'\
         'append-[kernel] [append]' 'append options to kernel cmdline after root=xxxx rw, specify [kernel] for a specific kernel, special [kernel] value: "all" for all kernels (replacing other), "default" for all kernels (being replaced by other)'\
+        'hostname [hostname]' 'unless specified, default: board name converted to lowercase then with only [a-z0-9-], or distro safe name, or empty'\
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
         'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
@@ -2268,8 +2274,8 @@ aimager_cli() {
             appends["${1:9}"]="$2"
             shift
             ;;
-        '--mkfs-arg')
-            mkfs_args["${2%%=*}"]="${2#*=}"
+        '--hostname')
+            hostname_original="$2"
             shift
             ;;
         '--overlay')
@@ -2292,6 +2298,10 @@ aimager_cli() {
                 shift
                 ;;
             esac
+            ;;
+        '--mkfs-arg')
+            mkfs_args["${2%%=*}"]="${2#*=}"
+            shift
             ;;
         # Builder behaviour options
         '--async-child')
