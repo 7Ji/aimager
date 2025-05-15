@@ -1766,7 +1766,7 @@ child_setup_users() {
     fi
     local sudo_group
     for sudo_group in "${sudo_groups[@]}"; do
-        echo "%w${sudo_group} ALL=(ALL:ALL) ALL" >> "${path_root}/etc/sudoers.d/groups-nopasswd.conf"
+        echo "%${sudo_group} ALL=(ALL:ALL) ALL" >> "${path_root}/etc/sudoers.d/groups-nopasswd.conf"
     done
 }
 
