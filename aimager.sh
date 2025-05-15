@@ -519,6 +519,11 @@ use_alarm_aarch64() {
     arch_target='aarch64'
 }
 
+use_archriscv_riscv64() {
+    distro='Arch Linux RISC-V'
+    arch_target='riscv64'
+}
+
 use_linux_and_lts() {
     kernels+=('linux' 'linux-lts')
 }
@@ -602,6 +607,14 @@ board_amlogic_s9xxx() {
     fdt='amlogic/PLEASE_SET_ME.dtb'
     use_booster
     use_u_boot
+}
+
+board_riscv64_unbootable() {
+    use_archriscv_riscv64
+    use_linux_and_lts
+    table="${table:-=gpt_1g_esp_16g_root_aarch64}"
+    use_booster
+    use_systemd_boot
 }
 
 help_board() {
