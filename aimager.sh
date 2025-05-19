@@ -1639,7 +1639,7 @@ child_setup_bootloader_systemd_boot() {
     for kernel in "${kernels[@]}"; do
         get_append
         {
-            echo "title ${distro_stylised}"
+            echo "title ${distro_stylised} (${kernel})"
             echo "linux ${boot_prefix}/vmlinuz-${kernel}"
             printf "initrd ${boot_prefix}/%s\n" "${ucodes[@]}" "${initrd_prefix}${kernel}.img"
             fdtdir="/dtbs/${kernel}"
@@ -1667,7 +1667,7 @@ child_setup_bootloader_extlinux() { #1 config
     local format_indent0='%-12s%s\n'
     local format_indent1='    %-12s%s\n'
     printf "${format_indent0}" \
-        'MENU TITLE' "${distro_stylised}" \
+        'MENU TITLE' "${distro_stylised} (${kernel})" \
         'TIMEOUT' '30' \
         'DEFAULT' "${kernels[0]}" \
         > "${extlinux}"
