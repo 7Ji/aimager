@@ -1072,7 +1072,7 @@ configure_table() {
         table_part_sizes["${part_order}"]=$(
             size_mb_extract_from_sfdisk_part "${part_info}" 'size')
         table_part_offsets["${part_order}"]=$(
-            size_mb_extract_from_sfdisk_part "${part_info}" 'offset')
+            size_mb_extract_from_sfdisk_part "${part_info}" 'start')
         part_type=$(echo "${part_info}" | sed -n \
             's/^.\+, *type= *\([^,]\+\)\(,.*\)\?$/\1/p')
         if [[ "${part_type}" == '"'*'"' ]]; then
