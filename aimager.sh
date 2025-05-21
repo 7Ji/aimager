@@ -624,7 +624,7 @@ board_aarch64_uboot() {
 
 board_phytium_d2000() {
     use_alarm_aarch64
-    add_repos+('7Ji')
+    add_repos+=('7Ji')
     kernels+=(linux-aarch64-{phytium-git,7ji})
     use_firmware
     table="${table:-=gpt_1g_esp_16g_root_aarch64}"
