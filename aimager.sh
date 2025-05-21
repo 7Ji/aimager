@@ -533,6 +533,11 @@ use_linux_aarch64_7ji() {
     kernels+=('linux-aarch64-7ji')
 }
 
+use_linux_aarch64_phytium() {
+    add_repos+=('7Ji')
+    kernels+=('linux-aarch64-phytium-git')
+}
+
 use_ucodes() {
     ucodes+=(
         [amd-ucode]='amd-ucode.img'
@@ -598,6 +603,14 @@ board_aarch64_uboot() {
     table="${table:-=gpt_1g_esp_16g_root_aarch64}"
     use_booster
     use_u_boot
+}
+
+board_phytium_d2000() {
+    use_alarm_aarch64
+    use_linux_aarch64_phytium
+    table="${table:-=gpt_1g_esp_16g_root_aarch64}"
+    use_booster
+    use_systemd_boot
 }
 
 board_amlogic_s9xxx() {
