@@ -1707,7 +1707,7 @@ child_setup_bootloader_extlinux() { #1 config
     local format_indent0='%-12s%s\n'
     local format_indent1='    %-12s%s\n'
     printf "${format_indent0}" \
-        'MENU TITLE' "${distro_stylised} (${kernel})" \
+        'MENU TITLE' "${distro_stylised}" \
         'TIMEOUT' '30' \
         'DEFAULT' "${kernels[0]}" \
         > "${extlinux}"
