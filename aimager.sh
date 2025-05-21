@@ -118,6 +118,7 @@ aimager_init() {
     hostname_original=''
     locales=()
     declare -gA mkfs_args
+    disk_over=''
     out_prefix=''
     overlays=()
     pacman_conf_append=''
@@ -478,6 +479,12 @@ table_common_gpt_1g_esp() {
     table_part boot '' 1G uefi ''
 }
 
+table_common_gpt_16m_gap_1g_esp_16g_root_aarch64() {
+    table_gpt_header
+    table_part boot 16M 1G uefi ''
+    table_part root '' 16G '"Linux root (ARM-64)"' ''
+}
+
 table_common_gpt_1g_esp_16g_root_aarch64() {
     table_common_gpt_1g_esp
     table_part root '' 16G '"Linux root (ARM-64)"' ''
@@ -618,6 +625,15 @@ board_amlogic_s9xxx() {
     use_linux_aarch64_7ji
     table="${table:-=dos_1g_esp_16g_root}"
     fdt='amlogic/PLEASE_SET_ME.dtb'
+    use_booster
+    use_u_boot
+}
+
+board_orangepi_5_family() {
+    use_alarm_aarch64
+    add_repos+=('7Ji')
+    kernels+=(linux-aarch64-{rockchip-{bsp6.1-joshua,rk3588-bsp5.10-orangepi}-git,7ji})
+    table="${table:-=gpt_16m_gap_1g_esp_16g_root_aarch64}"
     use_booster
     use_u_boot
 }
@@ -2107,7 +2123,12 @@ create_disk_img() {
     if [[ -f "${path_build}/head.img" ]]; then
         mv "${path_build}/head.img" "${path_out}.temp"
     fi
-    log_info "Creating disk image '${path_out}'..."
+    if [[ "${disk_over}" ]]; then
+        log_info "Creating disk image '${path_out}' over '${disk_over}'..."
+        cp "${disk_over}" "${path_out}.tmp"
+    else
+        log_info "Creating new disk image '${path_out}'..."
+    fi
     truncate -s "${table_size}"M "${path_out}".temp
     local part_order
     sfdisk "${path_out}".temp <<< "${table}"
@@ -2227,6 +2248,7 @@ help_aimager() {
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
         'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
+        'disk-over [image]' 'when creating disk.img (see below for --create), instead of creating a brand-new file, copy such image and resize it to the supposed size, useful if you want to embed e.g. u-boot, rkloader, etc into the target image'\
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
@@ -2438,6 +2460,10 @@ aimager_cli() {
             ;;
         '--mkfs-arg')
             mkfs_args["${2%%=*}"]="${2#*=}"
+            shift
+            ;;
+        '--disk-over')
+            disk_over="$2"
             shift
             ;;
         # Builder behaviour options
