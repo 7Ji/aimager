@@ -2141,7 +2141,7 @@ create_disk_img() {
     fi
     if [[ "${disk_from}" ]]; then
         log_info "Creating disk image '${path_out}' from '${disk_from}'..."
-        cp "${disk_from}" "${path_out}.tmp"
+        cp "${disk_from}" "${path_out}".temp
     else
         log_info "Creating new disk image '${path_out}'..."
     fi
