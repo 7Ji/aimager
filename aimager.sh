@@ -1428,15 +1428,24 @@ child_init_bootstrap() {
     log_info "Keyring ID is ${keyring_id}"
     local keyring_archive=cache/keyring/"${keyring_id}".tar
     local path_keyring="${path_root}/etc/pacman.d/gnupg"
+    local init_keyring=''
     if [[ -f "${keyring_archive}" ]]; then
         log_info \
             "Reusing keyring backup archive '${keyring_archive}'..."
         mkdir -p "${path_keyring}"
-        bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"
+        if ! bsdtar --acls --xattrs -xpf "${keyring_archive}" -C "${path_keyring}"; then
+            log_info \
+                "Failed to reuse keyring backup archive, need to initialize the krying..."
+            rm -rf "${path_keyring}" "${keyring_archive}"
+            init_keyring='y'
+        fi
     else
         log_warn \
             "This seems our first attempt to install for ${keyring_id},"\
             "need to initialize the keyring..."
+        init_keyring='y'
+    fi
+    if [[ "${init_keyring}" ]]; then
         child_init_keyring
     fi
     log_info "Going back to verify bootstrap packages..."
