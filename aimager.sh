@@ -858,7 +858,7 @@ configure_environment() {
 }
 
 configure_board() {
-    local board_func="board_${board/-/_}"
+    local board_func="board_${board//-/_}"
     if [[ $(type -t "${board_func}") == function ]]; then
         "${board_func}"
     else
@@ -1017,8 +1017,9 @@ configure_table() {
         ;;
     '='*)
         local table_func="${table:1}"
+        table_func="${table_func//-/_}"
         log_info "Using common table '${table_func}'" 
-        local table_func="table_common_${table_func/-/_}"
+        local table_func="table_common_${table_func}"
         if [[ $(type -t "${table_func}") == function ]]; then
             table=$("${table_func}")
         else
@@ -1779,7 +1780,7 @@ child_setup_bootloader_u_boot() {
 child_setup_bootloader() {
     local bootloader bootloader_func
     for bootloader in "${bootloaders[@]}"; do
-        bootloader_func="child_setup_bootloader_${bootloader/-/_}"
+        bootloader_func="child_setup_bootloader_${bootloader//-/_}"
         if [[ $(type -t "${bootloader_func}") == function ]]; then
             "${bootloader_func}"
         else
