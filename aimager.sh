@@ -636,6 +636,7 @@ board_orangepi_5_family() {
     table="${table:-=gpt_16m_gap_1g_esp_16g_root_aarch64}"
     use_booster
     use_u_boot
+    use_systemd_boot
 }
 
 board_riscv64_unbootable() {
