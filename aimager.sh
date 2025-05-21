@@ -107,6 +107,7 @@ aimager_init() {
     freeze_pacman_static=0
     initrd_maker=''
     kernels=()
+    firmwares=()
     declare -gA ucodes
     bootloaders=()
     bootloader_pkgs=()
@@ -545,6 +546,10 @@ use_linux_aarch64_phytium() {
     kernels+=('linux-aarch64-phytium-git')
 }
 
+use_firmware() {
+    firmwares+=('linux-firmware')
+}
+
 use_ucodes() {
     ucodes+=(
         [amd-ucode]='amd-ucode.img'
@@ -572,6 +577,7 @@ use_u_boot() {
 board_x64_uefi() {
     use_arch_x64
     use_linux_and_lts
+    use_firmware
     use_ucodes
     table="${table:-=gpt_1g_esp_16g_root_x86_64}"
     use_booster
@@ -581,6 +587,7 @@ board_x64_uefi() {
 board_x64_legacy() {
     use_arch_x64
     use_linux_and_lts
+    use_firmware
     use_ucodes
     table="${table:-=dos_1g_esp_16g_root}"
     use_booster
@@ -590,6 +597,7 @@ board_x64_legacy() {
 board_x86_legacy() {
     use_arch32_i686
     use_linux_and_lts
+    use_firmware
     use_ucodes
     table="${table:-=dos_1g_esp_16g_root}"
     use_booster
@@ -599,6 +607,7 @@ board_x86_legacy() {
 board_aarch64_uefi() {
     use_alarm_aarch64
     use_linux_aarch64_7ji
+    use_firmware
     table="${table:-=gpt_1g_esp_16g_root_aarch64}"
     use_booster
     use_systemd_boot
@@ -607,6 +616,7 @@ board_aarch64_uefi() {
 board_aarch64_uboot() {
     use_alarm_aarch64
     use_linux_aarch64_7ji
+    use_firmware
     table="${table:-=gpt_1g_esp_16g_root_aarch64}"
     use_booster
     use_u_boot
@@ -615,6 +625,7 @@ board_aarch64_uboot() {
 board_phytium_d2000() {
     use_alarm_aarch64
     use_linux_aarch64_phytium
+    use_firmware
     table="${table:-=gpt_1g_esp_16g_root_aarch64}"
     use_booster
     use_systemd_boot
@@ -623,6 +634,7 @@ board_phytium_d2000() {
 board_amlogic_s9xxx() {
     use_alarm_aarch64
     use_linux_aarch64_7ji
+    firmwares+=(linux-firmware{,-amlogic-ophub-git})
     table="${table:-=dos_1g_esp_16g_root}"
     fdt='amlogic/PLEASE_SET_ME.dtb'
     use_booster
@@ -633,6 +645,7 @@ board_orangepi_5_family() {
     use_alarm_aarch64
     add_repos+=('7Ji')
     kernels+=(linux-aarch64-{rockchip-{bsp6.1-joshua,rk3588-bsp5.10-orangepi}-git,7ji})
+    firmwares+=(linux-firmware{,-joshua-git})
     table="${table:-=gpt_16m_gap_1g_esp_16g_root_aarch64}"
     use_booster
     use_u_boot
@@ -1848,11 +1861,11 @@ child_setup_network() {
 
 child_setup() {
     child_setup_initrd_maker
-    if [[ "${install_pkgs[*]}${kernels[*]}${!ucodes[*]}${bootloader_pkgs[*]}" ]]; then
+    if [[ "${install_pkgs[*]}${kernels[*]}${firmwares[*]}${!ucodes[*]}${bootloader_pkgs[*]}" ]]; then
         log_info \
-            "Installing packages: ${install_pkgs[*]} ${kernels[*]} ${!ucodes[*]}"
+            "Installing packages: ${install_pkgs[*]} ${kernels[*]} ${firmwares[*]} ${!ucodes[*]} ${bootloader_pkgs[*]}"
         pacman -S --config "${path_etc}/pacman-strict.conf" --noconfirm \
-            --needed "${install_pkgs[@]}" "${kernels[@]}" "${!ucodes[@]}" "${bootloader_pkgs[@]}"
+            --needed "${install_pkgs[@]}" "${kernels[@]}" "${firmwares[@]}" "${!ucodes[@]}" "${bootloader_pkgs[@]}"
     fi
     child_revert_initrd_maker
     if [[ "${pacman_conf_append}" ]]; then
