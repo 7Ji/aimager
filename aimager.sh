@@ -119,7 +119,7 @@ aimager_init() {
     hostname_original=''
     locales=()
     declare -gA mkfs_args
-    disk_over=''
+    disk_from=''
     out_prefix=''
     overlays=()
     pacman_conf_append=''
@@ -2138,9 +2138,9 @@ create_disk_img() {
     if [[ -f "${path_build}/head.img" ]]; then
         mv "${path_build}/head.img" "${path_out}.temp"
     fi
-    if [[ "${disk_over}" ]]; then
-        log_info "Creating disk image '${path_out}' over '${disk_over}'..."
-        cp "${disk_over}" "${path_out}.tmp"
+    if [[ "${disk_from}" ]]; then
+        log_info "Creating disk image '${path_out}' from '${disk_from}'..."
+        cp "${disk_from}" "${path_out}.tmp"
     else
         log_info "Creating new disk image '${path_out}'..."
     fi
@@ -2263,7 +2263,7 @@ help_aimager() {
         'overlay [overlay]' 'path of overlay (a tar file), extracted to the target image after all other configuration is done, can be specified multiple-times' \
         'table [table]' 'either sfdisk-dump-like multi-line string, or @[path] to read such string from, or =[name] to use one of the built-in common tables, e.g. --table @mytable.sdisk.dump, --table =dos_16g_root. the table would be used by aimager to find the essential paritition infos, disk size, and later used as the input of sfdisk to create the table on disk image. aimager-specific partition definition lines should be prefixed with "aimager@[part]:" so aimager knows which partitions to use for boot, home, root, swap. pass "help" to check the list of built-in common tables. pass "help=[common table]" to show the built-in definition. e.g. pass "--table help=gpt_1g_esp_16g_root_x86_64" to get an idea of how the string should be prepared' \
         'mkfs-arg [part]=[arg]' 'addtional args passed when creating fs, part could be boot, home, root, swap'\
-        'disk-over [image]' 'when creating disk.img (see below for --create), instead of creating a brand-new file, copy such image and resize it to the supposed size, useful if you want to embed e.g. u-boot, rkloader, etc into the target image'\
+        'disk-from [image]' 'when creating disk.img (see below for --create), instead of creating a brand-new file, copy such image and resize it to the supposed size, useful if you want to embed e.g. u-boot, rkloader, etc into the target image'\
 
     printf '\nBuilder behaviour options:\n'
     printf -- "${formatter}" \
@@ -2477,8 +2477,8 @@ aimager_cli() {
             mkfs_args["${2%%=*}"]="${2#*=}"
             shift
             ;;
-        '--disk-over')
-            disk_over="$2"
+        '--disk-from')
+            disk_from="$2"
             shift
             ;;
         # Builder behaviour options
