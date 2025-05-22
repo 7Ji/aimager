@@ -2049,12 +2049,12 @@ work() {
 
 aimager() {
     identity_require_non_root
-    configure
     if  (( "${run_binfmt_check}" )); then
         binfmt_check
         return
     fi
     check
+    configure
     work
     log_info 'aimager exiting!!'
 }
