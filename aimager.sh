@@ -1896,7 +1896,20 @@ child_out() {
 child_clean() {
     log_info 'Child cleaning...'
     log_info 'Killing child gpg-agent...'
-    chroot "${path_root}" pkill -SIGINT --echo '^gpg-agent$' || true
+    local i signal_send
+    for i in {0..10}; do
+        if chroot "${path_root}" pgrep '^gpg-agent$'; then
+            if (( "${i}" >= 7 )); then
+                signal_send='SIGTERM'
+            else
+                signal_send='SIGINT'
+            fi
+            chroot "${path_root}" pkill -"${signal_send}" --echo '^gpg-agent$'
+            sleep 1
+        else
+            break
+        fi
+    done
     if [[ "${tmpfs_root_options}" ]]; then
         log_info 'Using tmpfs, skipped cleaning'
         return
