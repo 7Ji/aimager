@@ -1,5 +1,36 @@
 # WORK IN PROGRESS, DO NOT USE!!!
 
+## Usage
+
+The script runs rootless thanks to [user_namespace](https://www.man7.org/linux/man-pages/man7/user_namespaces.7.html), make sure you have configured that up (which should have been on modern Linux distros), to verify it, run:
+
+```
+unshare --map-root-user
+```
+
+The script has a couple of external binary dependencies which shall be installed on your current host,
+
+on Debian:
+```
+sudo apt update
+sudo apt install libarchive-tools mtools dosfstools uidmap uuid-runtime
+```
+
+on Arch Linux:
+```
+sudo pacman -Syu mtools dosfstools
+```
+
+Note addtionally on distros (mainly Debian) that hasn't done `/usr` merge yet, some binaries would be missing from `PATH` even if you've installed them, you need to adjust their `PATH` accordingly (not needed on Arch Linux):
+```
+export PATH=/usr/sbin:$PATH
+```
+
+Run the script to see the built-in help message:
+```
+./aimager.sh --help
+```
+
 ## In-and-out
 
 aimager is a **rootless**, **cross-distro** and **cross-architecture** Arch Linux and Arch Linux ports image/archive builder, with all of its logic written in **a single Bash script file** using only Bash-native logics and a limited set of Linux tools as dependencies, with config built-in.
